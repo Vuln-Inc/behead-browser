@@ -1,0 +1,30 @@
+{
+  "name": "behead-browser",
+  "version": "0.1.0",
+  "description": "Undetected, display-free headless Chromium with Patchright that strips HeadlessChrome from User-Agent Client Hints and worker contexts.",
+  "author": "vuln.industries",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Vuln-Inc/behead-browser.git"
+  },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "bun -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
+    "start": "bun src/example.ts",
+    "smoke:google": "bun src/google-smoke.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "patchright": "^1.61.1"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
