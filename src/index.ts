@@ -47,6 +47,7 @@ export interface BeheadFingerprint {
 }
 
 export interface BeheadLaunchOptions {
+  channel?: LaunchOptions["channel"]
   headless?: boolean
   proxy?: LaunchOptions["proxy"]
   timeout?: number
@@ -153,11 +154,11 @@ async function readNativeFingerprint(browser: Browser): Promise<NativeHeadlessFi
   }
 }
 
-let cachedFingerprint: Promise<BeheadFingerprint> | null = null
+const cachedFingerprints = new Map<string, Promise<BeheadFingerprint>>()
 
-async function detectFingerprint(): Promise<BeheadFingerprint> {
+async function detectFingerprint(channel: string): Promise<BeheadFingerprint> {
   const browser = await chromium.launch({
-    channel: "chromium",
+    channel,
     headless: true,
   })
 
@@ -168,13 +169,17 @@ async function detectFingerprint(): Promise<BeheadFingerprint> {
   }
 }
 
-async function getFingerprint(): Promise<BeheadFingerprint> {
-  cachedFingerprint ??= detectFingerprint()
+async function getFingerprint(channel: string): Promise<BeheadFingerprint> {
+  let pending = cachedFingerprints.get(channel)
+  if (!pending) {
+    pending = detectFingerprint(channel)
+    cachedFingerprints.set(channel, pending)
+  }
 
   try {
-    return await cachedFingerprint
+    return await pending
   } catch (error) {
-    cachedFingerprint = null
+    cachedFingerprints.delete(channel)
     throw error
   }
 }
@@ -307,11 +312,12 @@ export class BeheadBrowser {
   ) {}
 
   static async launch(options: BeheadLaunchOptions = {}): Promise<BeheadBrowser> {
+    const channel = options.channel ?? "chromium"
     const headless = options.headless ?? true
 
     if (!headless) {
       const browser = await chromium.launch({
-        channel: "chromium",
+        channel,
         headless: false,
         proxy: options.proxy,
         timeout: options.timeout,
@@ -329,12 +335,12 @@ export class BeheadBrowser {
       }
     }
 
-    const fingerprint = await getFingerprint()
+    const fingerprint = await getFingerprint(channel)
     const browser = await chromium.launch({
       args: [
         `--user-agent=${fingerprint.userAgent}`,
       ],
-      channel: "chromium",
+      channel,
       headless: true,
       proxy: options.proxy,
       timeout: options.timeout,
