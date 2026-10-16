@@ -203,7 +203,7 @@ async function attachTargetFingerprint(browser: Browser, fingerprint: BeheadFing
   const workerCdp = await browser.newBrowserCDPSession()
   const pageCdp = await browser.newBrowserCDPSession()
   const configuredTargets = new Set<string>()
-  const pendingWorkerSessions = new Set<string>()
+  const pendingWorkerSessions = new Map<string, string>()
   const overrideParams = {
     userAgent: fingerprint.userAgent,
     platform: fingerprint.platform,
@@ -222,15 +222,24 @@ async function attachTargetFingerprint(browser: Browser, fingerprint: BeheadFing
     try {
       const parsed = JSON.parse(message)
       if (parsed.id === 1) {
+        const flatSessionId = pendingWorkerSessions.get(sessionId)
         pendingWorkerSessions.delete(sessionId)
-        void workerCdp.send("Target.detachFromTarget", { sessionId }).catch(() => undefined)
+        if (flatSessionId) {
+          void workerCdp.send("Target.detachFromTarget", { sessionId: flatSessionId }).catch(() => undefined)
+        }
       }
     } catch {}
   })
 
-  workerCdp.on("Target.attachedToTarget", async ({ targetInfo }: any) => {
+  workerCdp.on("Target.attachedToTarget", async ({ sessionId: flatSessionId, targetInfo, waitingForDebugger }: any) => {
     const targetId = targetInfo?.targetId
-    if (!targetId || configuredTargets.has(targetId)) return
+    if (!targetId) return
+    if (configuredTargets.has(targetId)) {
+      if (waitingForDebugger && flatSessionId) {
+        void workerCdp.send("Target.detachFromTarget", { sessionId: flatSessionId }).catch(() => undefined)
+      }
+      return
+    }
     configuredTargets.add(targetId)
 
     try {
@@ -238,7 +247,7 @@ async function attachTargetFingerprint(browser: Browser, fingerprint: BeheadFing
         targetId,
         flatten: false,
       })
-      pendingWorkerSessions.add(sessionId)
+      pendingWorkerSessions.set(sessionId, flatSessionId)
       await workerCdp.send("Target.sendMessageToTarget", {
         sessionId,
         message: JSON.stringify({
@@ -249,6 +258,9 @@ async function attachTargetFingerprint(browser: Browser, fingerprint: BeheadFing
       })
     } catch {
       configuredTargets.delete(targetId)
+      if (waitingForDebugger && flatSessionId) {
+        void workerCdp.send("Target.detachFromTarget", { sessionId: flatSessionId }).catch(() => undefined)
+      }
     }
   })
 

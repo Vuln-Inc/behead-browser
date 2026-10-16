@@ -261,38 +261,104 @@ describe("Behead Patchright fingerprint", () => {
 
   test("supports persistent sessions with pre-existing and newly opened pages", async () => {
     const userDataDir = mkdtempSync(join(tmpdir(), "behead-persistent-"))
-    const session = await launchPersistentBeheadSession(userDataDir)
+    const server = createServer((req, res) => {
+      const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname
+      if (pathname === "/sw.js") {
+        res.writeHead(200, { "Content-Type": "text/javascript" })
+        res.end(`
+          self.addEventListener("install", () => self.skipWaiting())
+          self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()))
+          self.addEventListener("fetch", (event) => {
+            event.respondWith(
+              navigator.userAgentData.getHighEntropyValues(["architecture", "fullVersionList"]).then((fetchHe) =>
+                new Response(
+                  "<!doctype html><script src='/sub.js'></script><title>" +
+                    JSON.stringify({ fetchHe }) +
+                    "</title>",
+                  { headers: { "Content-Type": "text/html", "Cache-Control": "no-store" } },
+                ),
+              ),
+            )
+          })
+          self.addEventListener("message", async (event) => {
+            const msgHe = await navigator.userAgentData.getHighEntropyValues([
+              "architecture",
+              "bitness",
+              "formFactors",
+              "fullVersionList",
+              "uaFullVersion",
+            ])
+            event.source.postMessage(msgHe)
+          })
+        `)
+        return
+      }
+      if (pathname === "/sub.js") {
+        res.writeHead(200, { "Content-Type": "text/javascript" })
+        res.end("window.__subLoaded = true")
+        return
+      }
+      res.writeHead(200, { "Content-Type": "text/html" })
+      res.end("<!doctype html><title>Persistent test</title>")
+    })
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const port = (server.address() as any).port
+    const baseUrl = `http://localhost:${port}`
 
     try {
-      await session.context.route("http://localhost/**", (route) =>
-        route.fulfill({
-          status: 200,
-          contentType: "text/html",
-          body: "<!doctype html><title>Persistent test</title>",
-        }),
-      )
+      const session1 = await launchPersistentBeheadSession(userDataDir)
+      try {
+        const initialPage = session1.context.pages()[0] ?? (await session1.context.newPage())
+        await initialPage.goto(`${baseUrl}/persistent-test`)
+        await initialPage.evaluate(async () => {
+          await navigator.serviceWorker.register("/sw.js")
+          await new Promise<void>((resolve) => {
+            if (navigator.serviceWorker.controller) return resolve()
+            navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true })
+          })
+        })
+      } finally {
+        await session1.close()
+      }
 
-      const initialPage = session.context.pages()[0] ?? (await session.context.newPage())
-      await initialPage.goto("http://localhost/persistent-test")
+      const session2 = await launchPersistentBeheadSession(userDataDir)
+      try {
+        const reopenedPage = session2.context.pages()[0] ?? (await session2.context.newPage())
+        await reopenedPage.goto(`${baseUrl}/persistent-test`, { waitUntil: "load", timeout: 5_000 })
+        const serviceWorkerHighEntropy = await reopenedPage.evaluate(
+          () =>
+            new Promise<any>((resolve) => {
+              navigator.serviceWorker.addEventListener("message", (event) => resolve(event.data), { once: true })
+              navigator.serviceWorker.controller!.postMessage("ping")
+            }),
+        )
+        await reopenedPage.reload({ waitUntil: "load", timeout: 5_000 })
+        const reloadSw = JSON.parse(await reopenedPage.title())
 
-      const state = await initialPage.evaluate(async () => {
-        const data = (navigator as any).userAgentData
-        return {
-          userAgent: navigator.userAgent,
-          highEntropy: await data?.getHighEntropyValues([
-            "architecture",
-            "bitness",
-            "formFactors",
-            "fullVersionList",
-            "uaFullVersion",
-          ]),
-        }
-      })
+        const state = await reopenedPage.evaluate(async () => {
+          const data = (navigator as any).userAgentData
+          return {
+            userAgent: navigator.userAgent,
+            highEntropy: await data?.getHighEntropyValues([
+              "architecture",
+              "bitness",
+              "formFactors",
+              "fullVersionList",
+              "uaFullVersion",
+            ]),
+          }
+        })
 
-      expect(JSON.stringify(state)).not.toContain("HeadlessChrome")
-      expect(state.highEntropy.fullVersionList).toEqual(session.fingerprint.userAgentMetadata.fullVersionList)
+        expect(JSON.stringify({ state, serviceWorkerHighEntropy, reloadSw })).not.toContain("HeadlessChrome")
+        expect(state.highEntropy.fullVersionList).toEqual(session2.fingerprint.userAgentMetadata.fullVersionList)
+        expect(serviceWorkerHighEntropy).toEqual(state.highEntropy)
+        expect(reloadSw.fetchHe.fullVersionList).toEqual(session2.fingerprint.userAgentMetadata.fullVersionList)
+      } finally {
+        await session2.close()
+      }
     } finally {
-      await session.close()
+      server.close()
       rmSync(userDataDir, { recursive: true, force: true })
     }
   }, 30_000)
