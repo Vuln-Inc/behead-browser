@@ -46,18 +46,9 @@ export interface BeheadFingerprint {
   }
 }
 
-export interface BeheadLaunchOptions {
-  channel?: LaunchOptions["channel"]
-  headless?: boolean
-  proxy?: LaunchOptions["proxy"]
-  timeout?: number
-}
+export type BeheadLaunchOptions = LaunchOptions
 
-export interface BeheadSessionOptions {
-  acceptDownloads?: boolean
-  baseURL?: string
-  storageState?: BrowserContextOptions["storageState"]
-}
+export type BeheadSessionOptions = Omit<BrowserContextOptions, "userAgent">
 
 export function buildBeheadFingerprint(
   native: NativeHeadlessFingerprint,
@@ -156,9 +147,13 @@ async function readNativeFingerprint(browser: Browser): Promise<NativeHeadlessFi
 
 const cachedFingerprints = new Map<string, Promise<BeheadFingerprint>>()
 
-async function detectFingerprint(channel: string): Promise<BeheadFingerprint> {
+async function detectFingerprint(
+  channel: string,
+  executablePath?: string,
+): Promise<BeheadFingerprint> {
   const browser = await chromium.launch({
-    channel,
+    channel: executablePath ? undefined : channel,
+    executablePath,
     headless: true,
   })
 
@@ -169,17 +164,21 @@ async function detectFingerprint(channel: string): Promise<BeheadFingerprint> {
   }
 }
 
-async function getFingerprint(channel: string): Promise<BeheadFingerprint> {
-  let pending = cachedFingerprints.get(channel)
+async function getFingerprint(
+  channel: string,
+  executablePath?: string,
+): Promise<BeheadFingerprint> {
+  const cacheKey = executablePath ? `path:${executablePath}` : `channel:${channel}`
+  let pending = cachedFingerprints.get(cacheKey)
   if (!pending) {
-    pending = detectFingerprint(channel)
-    cachedFingerprints.set(channel, pending)
+    pending = detectFingerprint(channel, executablePath)
+    cachedFingerprints.set(cacheKey, pending)
   }
 
   try {
     return await pending
   } catch (error) {
-    cachedFingerprints.delete(channel)
+    cachedFingerprints.delete(cacheKey)
     throw error
   }
 }
@@ -314,13 +313,13 @@ export class BeheadBrowser {
   static async launch(options: BeheadLaunchOptions = {}): Promise<BeheadBrowser> {
     const channel = options.channel ?? "chromium"
     const headless = options.headless ?? true
+    const userArgs = options.args ?? []
 
     if (!headless) {
       const browser = await chromium.launch({
-        channel,
+        ...options,
+        channel: options.executablePath ? options.channel : channel,
         headless: false,
-        proxy: options.proxy,
-        timeout: options.timeout,
       })
 
       try {
@@ -335,15 +334,16 @@ export class BeheadBrowser {
       }
     }
 
-    const fingerprint = await getFingerprint(channel)
+    const fingerprint = await getFingerprint(channel, options.executablePath)
+    const filteredArgs = userArgs.filter((arg) => !arg.startsWith("--user-agent="))
     const browser = await chromium.launch({
+      ...options,
       args: [
+        ...filteredArgs,
         `--user-agent=${fingerprint.userAgent}`,
       ],
-      channel,
+      channel: options.executablePath ? options.channel : channel,
       headless: true,
-      proxy: options.proxy,
-      timeout: options.timeout,
     })
 
     try {
@@ -357,10 +357,8 @@ export class BeheadBrowser {
 
   async newSession(options: BeheadSessionOptions = {}): Promise<BeheadSession> {
     const context = await this.browser.newContext({
-      acceptDownloads: options.acceptDownloads,
-      baseURL: options.baseURL,
-      storageState: options.storageState,
-      viewport: null,
+      ...options,
+      viewport: options.viewport === undefined ? null : options.viewport,
     })
 
     return new BeheadSession(context, this.fingerprint, this.headless)
