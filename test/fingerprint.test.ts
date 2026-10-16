@@ -1,8 +1,12 @@
+import { mkdtempSync, rmSync } from "node:fs"
 import { createServer } from "node:http"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { describe, expect, test } from "bun:test"
 import {
   buildBeheadFingerprint,
   launchBeheadBrowser,
+  launchPersistentBeheadSession,
   type NativeHeadlessFingerprint,
 } from "../src/index"
 
@@ -155,9 +159,25 @@ describe("Behead Patchright fingerprint", () => {
       }))
       const popupPromise = session.context.waitForEvent("page")
       await page.evaluate((url) => window.open(url, "_blank"), `${baseUrl}/popup`)
-      const popup = await session.preparePage(await popupPromise)
+      const popup = await popupPromise
       await popup.waitForLoadState("domcontentloaded")
       const popupFingerprint = await popup.evaluate(async () => {
+        const data = (navigator as any).userAgentData
+        return {
+          userAgent: navigator.userAgent,
+          brands: data?.brands ?? [],
+          highEntropy: await data?.getHighEntropyValues([
+            "architecture",
+            "bitness",
+            "formFactors",
+            "fullVersionList",
+            "uaFullVersion",
+          ]),
+        }
+      })
+      const directContextPage = await session.context.newPage()
+      await directContextPage.goto(`${baseUrl}/direct-context`)
+      const directContextFingerprint = await directContextPage.evaluate(async () => {
         const data = (navigator as any).userAgentData
         return {
           userAgent: navigator.userAgent,
@@ -179,6 +199,7 @@ describe("Behead Patchright fingerprint", () => {
         sharedWorker,
         serviceWorker,
         popupFingerprint,
+        directContextFingerprint,
       }
       expect(JSON.stringify(surfaces)).not.toContain("HeadlessChrome")
       expect(requestHeaders.get("/fingerprint-test")?.["user-agent"]).toBe(main.userAgent)
@@ -186,11 +207,13 @@ describe("Behead Patchright fingerprint", () => {
       expect(sharedWorker.userAgent).toBe(main.userAgent)
       expect(serviceWorker.userAgent).toBe(main.userAgent)
       expect(popupFingerprint.userAgent).toBe(main.userAgent)
+      expect(directContextFingerprint.userAgent).toBe(main.userAgent)
       expect(main.highEntropy.fullVersionList).toEqual(browser.fingerprint.userAgentMetadata.fullVersionList)
       expect(dedicatedWorker.highEntropy).toEqual(main.highEntropy)
       expect(sharedWorker.highEntropy).toEqual(main.highEntropy)
       expect(serviceWorker.highEntropy).toEqual(main.highEntropy)
       expect(popupFingerprint.highEntropy).toEqual(main.highEntropy)
+      expect(directContextFingerprint.highEntropy).toEqual(main.highEntropy)
       expect(main.webdriver).toBe(false)
       expect(main.ownsWebdriver).toBe(false)
       expect(main.ownsLanguages).toBe(false)
@@ -233,6 +256,44 @@ describe("Behead Patchright fingerprint", () => {
       await session.close()
     } finally {
       await browser.close()
+    }
+  }, 30_000)
+
+  test("supports persistent sessions with pre-existing and newly opened pages", async () => {
+    const userDataDir = mkdtempSync(join(tmpdir(), "behead-persistent-"))
+    const session = await launchPersistentBeheadSession(userDataDir)
+
+    try {
+      await session.context.route("http://localhost/**", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "text/html",
+          body: "<!doctype html><title>Persistent test</title>",
+        }),
+      )
+
+      const initialPage = session.context.pages()[0] ?? (await session.context.newPage())
+      await initialPage.goto("http://localhost/persistent-test")
+
+      const state = await initialPage.evaluate(async () => {
+        const data = (navigator as any).userAgentData
+        return {
+          userAgent: navigator.userAgent,
+          highEntropy: await data?.getHighEntropyValues([
+            "architecture",
+            "bitness",
+            "formFactors",
+            "fullVersionList",
+            "uaFullVersion",
+          ]),
+        }
+      })
+
+      expect(JSON.stringify(state)).not.toContain("HeadlessChrome")
+      expect(state.highEntropy.fullVersionList).toEqual(session.fingerprint.userAgentMetadata.fullVersionList)
+    } finally {
+      await session.close()
+      rmSync(userDataDir, { recursive: true, force: true })
     }
   }, 30_000)
 })

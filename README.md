@@ -24,7 +24,7 @@ Running Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromi
 - Derives the real browser version, platform, architecture, bitness, form factors, and UA Client Hints dynamically from the installed binary — works across Linux, macOS, and Windows with zero hardcoded values.
 - Removes `HeadlessChrome` identifiers while preserving every other native browser-provided value.
 - Keeps HTTP request headers, page JavaScript, popups, dedicated workers, shared workers, and service workers internally consistent.
-- Attaches CDP `Emulation.setUserAgentOverride` directly to `shared_worker` and `service_worker` targets on startup (`waitForDebuggerOnStart: true`) so all worker scopes remain enabled with full high-entropy Client Hints.
+- Attaches CDP `Emulation.setUserAgentOverride` automatically to page, iframe, `shared_worker`, and `service_worker` targets on creation so popups, `context.newPage()`, and all worker scopes inherit full high-entropy Client Hints automatically.
 - Uses no `addInitScript`, navigator prototype tampering, hardcoded User-Agent strings, or Xvfb.
 
 ## Setup
@@ -68,21 +68,20 @@ try {
 }
 ```
 
-Always create pages through `session.newPage()`. Calling `session.context.newPage()` directly bypasses the per-page Client Hints configuration.
+`session.context` remains available for cookies, permissions, storage state, downloads, and other normal Playwright APIs. Pages created through `session.newPage()`, `session.context.newPage()`, or `window.open()` popups automatically receive the Client Hints configuration.
 
-`session.context` remains available for cookies, permissions, storage state, downloads, and other normal Playwright APIs.
+## Persistent Profile & Session State
 
-Prepare a popup before interacting with it:
+Launch a persistent profile directory on disk:
 
 ```ts
-const popupPromise = page.waitForEvent("popup")
-await page.getByRole("link", { name: "Open" }).click()
-const popup = await session.preparePage(await popupPromise)
+import { launchPersistentBeheadSession } from "./src/index.js"
+
+const session = await launchPersistentBeheadSession("./user-data")
+const page = await session.newPage()
 ```
 
-## Session State
-
-Save and restore cookies and local storage using normal Playwright storage state:
+Or save and restore cookies and local storage using Playwright storage state:
 
 ```ts
 const state = await session.context.storageState({ path: "state.json" })
