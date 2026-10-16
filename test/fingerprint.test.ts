@@ -136,4 +136,38 @@ describe("Behead Patchright fingerprint", () => {
       await browser.close()
     }
   }, 30_000)
+
+  test("supports headful mode without headless flags or worker restrictions", async () => {
+    const browser = await launchBeheadBrowser({ headless: false })
+
+    try {
+      const session = await browser.newSession()
+      const page = await session.newPage()
+
+      await session.context.route("http://localhost/**", (route) => {
+        const serviceWorker = route.request().url().endsWith("/sw.js")
+        return route.fulfill({
+          status: 200,
+          contentType: serviceWorker ? "text/javascript" : "text/html",
+          body: serviceWorker ? "" : "<!doctype html><title>Headful test</title>",
+        })
+      })
+      await page.goto("http://localhost/headful-test")
+
+      const state = await page.evaluate(async () => ({
+        userAgent: navigator.userAgent,
+        brands: (navigator as any).userAgentData?.brands ?? [],
+        sharedWorkerAvailable: typeof SharedWorker !== "undefined",
+        serviceWorkerRegistered: Boolean(await navigator.serviceWorker.register("/sw.js")),
+      }))
+
+      expect(JSON.stringify(state)).not.toContain("HeadlessChrome")
+      expect(state.sharedWorkerAvailable).toBe(true)
+      expect(state.serviceWorkerRegistered).toBe(true)
+
+      await session.close()
+    } finally {
+      await browser.close()
+    }
+  }, 30_000)
 })

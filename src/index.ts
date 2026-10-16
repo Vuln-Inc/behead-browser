@@ -47,6 +47,7 @@ export interface BeheadFingerprint {
 }
 
 export interface BeheadLaunchOptions {
+  headless?: boolean
   proxy?: LaunchOptions["proxy"]
   timeout?: number
 }
@@ -193,13 +194,18 @@ export class BeheadSession {
   constructor(
     public readonly context: BrowserContext,
     private readonly fingerprint: BeheadFingerprint,
+    private readonly headless: boolean = true,
   ) {
-    this.context.on("page", (page) => {
-      void this.configurePage(page).catch(() => undefined)
-    })
+    if (this.headless) {
+      this.context.on("page", (page) => {
+        void this.configurePage(page).catch(() => undefined)
+      })
+    }
   }
 
   private configurePage(page: Page): Promise<void> {
+    if (!this.headless) return Promise.resolve()
+
     const existing = this.pageConfigurations.get(page)
     if (existing) return existing
 
@@ -234,9 +240,32 @@ export class BeheadBrowser {
   private constructor(
     public readonly browser: Browser,
     public readonly fingerprint: BeheadFingerprint,
+    private readonly headless: boolean = true,
   ) {}
 
   static async launch(options: BeheadLaunchOptions = {}): Promise<BeheadBrowser> {
+    const headless = options.headless ?? true
+
+    if (!headless) {
+      const browser = await chromium.launch({
+        channel: "chromium",
+        headless: false,
+        proxy: options.proxy,
+        timeout: options.timeout,
+      })
+
+      try {
+        const fingerprint = buildBeheadFingerprint(
+          await readNativeFingerprint(browser),
+          browser.version(),
+        )
+        return new BeheadBrowser(browser, fingerprint, false)
+      } catch (error) {
+        await browser.close().catch(() => undefined)
+        throw error
+      }
+    }
+
     const fingerprint = await getFingerprint()
     const browser = await chromium.launch({
       args: [
@@ -249,19 +278,19 @@ export class BeheadBrowser {
       timeout: options.timeout,
     })
 
-    return new BeheadBrowser(browser, fingerprint)
+    return new BeheadBrowser(browser, fingerprint, true)
   }
 
   async newSession(options: BeheadSessionOptions = {}): Promise<BeheadSession> {
     const context = await this.browser.newContext({
       acceptDownloads: options.acceptDownloads,
       baseURL: options.baseURL,
-      serviceWorkers: "block",
+      serviceWorkers: this.headless ? "block" : "allow",
       storageState: options.storageState,
       viewport: null,
     })
 
-    return new BeheadSession(context, this.fingerprint)
+    return new BeheadSession(context, this.fingerprint, this.headless)
   }
 
   async close(): Promise<void> {
