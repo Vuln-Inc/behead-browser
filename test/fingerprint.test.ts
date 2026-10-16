@@ -1,3 +1,4 @@
+import { createServer } from "node:http"
 import { describe, expect, test } from "bun:test"
 import {
   buildBeheadFingerprint,
@@ -40,23 +41,66 @@ describe("Behead Patchright fingerprint", () => {
   })
 
   test("keeps browser surfaces internally consistent", async () => {
+    const requestHeaders = new Map<string, Record<string, string>>()
+    const workerScript = `
+      const surfacePromise = navigator.userAgentData.getHighEntropyValues([
+        "architecture",
+        "bitness",
+        "formFactors",
+        "fullVersionList",
+        "uaFullVersion",
+      ]).then((highEntropy) => ({
+        userAgent: navigator.userAgent,
+        brands: navigator.userAgentData.brands,
+        highEntropy,
+      }))
+    `
+    const server = createServer((req, res) => {
+      const pathname = new URL(req.url ?? "/", "http://127.0.0.1").pathname
+      const headers: Record<string, string> = {}
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (typeof v === "string") headers[k] = v
+      }
+      requestHeaders.set(pathname, headers)
+
+      if (pathname === "/shared.js") {
+        res.writeHead(200, { "Content-Type": "text/javascript" })
+        res.end(`
+          ${workerScript}
+          onconnect = (event) => {
+            const port = event.ports[0]
+            port.onmessage = async () => port.postMessage(await surfacePromise)
+          }
+        `)
+        return
+      }
+      if (pathname === "/sw.js") {
+        res.writeHead(200, { "Content-Type": "text/javascript" })
+        res.end(`
+          ${workerScript}
+          self.addEventListener("install", () => self.skipWaiting())
+          self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()))
+          self.addEventListener("message", async (event) => {
+            event.source.postMessage(await surfacePromise)
+          })
+        `)
+        return
+      }
+
+      res.writeHead(200, { "Content-Type": "text/html" })
+      res.end("<!doctype html><title>Fingerprint test</title>")
+    })
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+    const port = (server.address() as any).port
+    const baseUrl = `http://127.0.0.1:${port}`
     const browser = await launchBeheadBrowser()
 
     try {
       const session = await browser.newSession()
       const page = await session.newPage()
-      const requestHeaders = new Map<string, Record<string, string>>()
 
-      await session.context.route("http://localhost/**", (route) => {
-        requestHeaders.set(new URL(route.request().url()).pathname, route.request().headers())
-        const serviceWorker = route.request().url().endsWith("/sw.js")
-        return route.fulfill({
-          status: 200,
-          contentType: serviceWorker ? "text/javascript" : "text/html",
-          body: serviceWorker ? "" : "<!doctype html><title>Fingerprint test</title>",
-        })
-      })
-      await page.goto("http://localhost/fingerprint-test")
+      await page.goto(`${baseUrl}/fingerprint-test`)
 
       const main = await page.evaluate(async () => {
         const data = (navigator as any).userAgentData
@@ -84,9 +128,33 @@ describe("Behead Patchright fingerprint", () => {
         }
         worker.onerror = reject
       }))
-      const sharedWorkerAvailable = await page.evaluate(() => typeof SharedWorker !== "undefined")
+      const sharedWorker = await page.evaluate(() => new Promise<any>((resolve, reject) => {
+        const worker = new SharedWorker("/shared.js")
+        worker.port.onmessage = (event) => resolve(event.data)
+        worker.onerror = reject
+        worker.port.postMessage("ping")
+      }))
+      const serviceWorker = await page.evaluate(() => new Promise<any>(async (resolve, reject) => {
+        try {
+          navigator.serviceWorker.addEventListener("message", (event) => resolve(event.data), { once: true })
+          const reg = await navigator.serviceWorker.register("/sw.js")
+          const send = () => {
+            const active = reg.active || reg.waiting || reg.installing
+            if (active && active.state === "activated") {
+              active.postMessage("ping")
+            } else if (active) {
+              active.addEventListener("statechange", () => {
+                if (active.state === "activated") active.postMessage("ping")
+              })
+            }
+          }
+          send()
+        } catch (error) {
+          reject(error)
+        }
+      }))
       const popupPromise = session.context.waitForEvent("page")
-      await page.evaluate(() => window.open("http://localhost/popup", "_blank"))
+      await page.evaluate((url) => window.open(url, "_blank"), `${baseUrl}/popup`)
       const popup = await session.preparePage(await popupPromise)
       await popup.waitForLoadState("domcontentloaded")
       const popupFingerprint = await popup.evaluate(async () => {
@@ -103,37 +171,34 @@ describe("Behead Patchright fingerprint", () => {
           ]),
         }
       })
-      const serviceWorkerRegistered = await page.evaluate(async () => {
-        try {
-          return Boolean(await navigator.serviceWorker.register("/sw.js"))
-        } catch {
-          return false
-        }
-      }, undefined, false)
 
       const surfaces = {
         requestHeaders: Object.fromEntries(requestHeaders),
         main,
         dedicatedWorker,
+        sharedWorker,
+        serviceWorker,
         popupFingerprint,
       }
       expect(JSON.stringify(surfaces)).not.toContain("HeadlessChrome")
       expect(requestHeaders.get("/fingerprint-test")?.["user-agent"]).toBe(main.userAgent)
       expect(dedicatedWorker.userAgent).toBe(main.userAgent)
+      expect(sharedWorker.userAgent).toBe(main.userAgent)
+      expect(serviceWorker.userAgent).toBe(main.userAgent)
       expect(popupFingerprint.userAgent).toBe(main.userAgent)
       expect(main.highEntropy.fullVersionList).toEqual(browser.fingerprint.userAgentMetadata.fullVersionList)
-      expect(dedicatedWorker.highEntropy.fullVersionList).toEqual(main.highEntropy.fullVersionList)
-      expect(popupFingerprint.highEntropy.fullVersionList).toEqual(main.highEntropy.fullVersionList)
+      expect(dedicatedWorker.highEntropy).toEqual(main.highEntropy)
+      expect(sharedWorker.highEntropy).toEqual(main.highEntropy)
+      expect(serviceWorker.highEntropy).toEqual(main.highEntropy)
+      expect(popupFingerprint.highEntropy).toEqual(main.highEntropy)
       expect(main.webdriver).toBe(false)
       expect(main.ownsWebdriver).toBe(false)
       expect(main.ownsLanguages).toBe(false)
-      expect(sharedWorkerAvailable).toBe(false)
-      expect(serviceWorkerRegistered).toBe(false)
-      expect(session.context.serviceWorkers()).toHaveLength(0)
 
       await session.close()
     } finally {
       await browser.close()
+      server.close()
     }
   }, 30_000)
 

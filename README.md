@@ -16,15 +16,15 @@
 
 Running Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromium still exposes `HeadlessChrome` in `navigator.userAgent`, `sec-ch-ua` request headers, high-entropy `navigator.userAgentData` (`brands` and `fullVersionList`), and worker execution contexts.
 
-**Behead Browser** probes the installed Chromium binary once per process on a local loopback origin, strips only `HeadlessChrome` while keeping the real host OS, architecture, bitness, form factors, and browser version intact, and applies consistent Client Hints across pages, popups, and dedicated workers.
+**Behead Browser** probes the installed Chromium binary once per process on a local loopback origin, strips only `HeadlessChrome` while keeping the real host OS, architecture, bitness, form factors, and browser version intact, and applies consistent Client Hints across pages, popups, dedicated workers, shared workers, and service workers.
 
 ## What It Does
 
 - Uses full Chromium's modern headless mode (`channel: "chromium"`, `headless: true`) instead of `chromium-headless-shell`.
 - Derives the real browser version, platform, architecture, bitness, form factors, and UA Client Hints dynamically from the installed binary — works across Linux, macOS, and Windows with zero hardcoded values.
 - Removes `HeadlessChrome` identifiers while preserving every other native browser-provided value.
-- Keeps HTTP request headers, page JavaScript, popups, and dedicated workers internally consistent.
-- Disables service and shared workers (`--disable-features=SharedWorker`, `serviceWorkers: "block"`) because Chromium does not propagate high-entropy metadata overrides to those targets.
+- Keeps HTTP request headers, page JavaScript, popups, dedicated workers, shared workers, and service workers internally consistent.
+- Attaches CDP `Emulation.setUserAgentOverride` directly to `shared_worker` and `service_worker` targets on startup (`waitForDebuggerOnStart: true`) so all worker scopes remain enabled with full high-entropy Client Hints.
 - Uses no `addInitScript`, navigator prototype tampering, hardcoded User-Agent strings, or Xvfb.
 
 ## Setup
@@ -104,7 +104,5 @@ const browser = await launchBeheadBrowser({
 ## Important Limits
 
 Patchright's maintainer explicitly states that perfect headless indistinguishability requires a custom Chromium build. Behead Browser closes the concrete leaks verified in request headers and JavaScript execution contexts, but no automation configuration can guarantee permanent invisibility against every site.
-
-Service and shared workers are intentionally unavailable. If a target requires either feature, use a purpose-built Chromium fork or headed browser instead of reintroducing an inconsistent headless fingerprint.
 
 Do not layer generic "stealth" scripts on top. In particular, avoid redefining `navigator.webdriver`, `navigator.languages`, `navigator.userAgentData`, or `window.chrome`; those modifications commonly create contradictions that are easier to detect than Patchright itself.

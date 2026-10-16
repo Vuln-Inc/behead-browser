@@ -188,6 +188,69 @@ async function applyFingerprint(page: Page, fingerprint: BeheadFingerprint): Pro
   })
 }
 
+async function attachWorkerFingerprint(browser: Browser, fingerprint: BeheadFingerprint): Promise<void> {
+  const browserCdp = await browser.newBrowserCDPSession()
+  const configuredTargets = new Set<string>()
+  const pendingSessions = new Set<string>()
+
+  browserCdp.on("Target.targetDestroyed", ({ targetId }: any) => {
+    configuredTargets.delete(targetId)
+  })
+
+  browserCdp.on("Target.receivedMessageFromTarget", ({ sessionId, message }: any) => {
+    if (!pendingSessions.has(sessionId)) return
+
+    try {
+      const parsed = JSON.parse(message)
+      if (parsed.id === 1) {
+        pendingSessions.delete(sessionId)
+        void browserCdp.send("Target.detachFromTarget", { sessionId }).catch(() => undefined)
+      }
+    } catch {}
+  })
+
+  browserCdp.on("Target.attachedToTarget", async ({ targetInfo }: any) => {
+    const targetId = targetInfo?.targetId
+    if (!targetId || configuredTargets.has(targetId)) return
+    configuredTargets.add(targetId)
+
+    try {
+      const { sessionId } = await browserCdp.send("Target.attachToTarget", {
+        targetId,
+        flatten: false,
+      })
+      pendingSessions.add(sessionId)
+      await browserCdp.send("Target.sendMessageToTarget", {
+        sessionId,
+        message: JSON.stringify({
+          id: 1,
+          method: "Emulation.setUserAgentOverride",
+          params: {
+            userAgent: fingerprint.userAgent,
+            platform: fingerprint.platform,
+            userAgentMetadata: fingerprint.userAgentMetadata,
+          },
+        }),
+      })
+    } catch {
+      configuredTargets.delete(targetId)
+    }
+  })
+
+  await browserCdp.send("Target.setAutoAttach", {
+    autoAttach: true,
+    waitForDebuggerOnStart: true,
+    flatten: true,
+    filter: [
+      { type: "shared_worker", exclude: false },
+      { type: "service_worker", exclude: false },
+      { type: "page", exclude: true },
+      { type: "background_page", exclude: true },
+      { type: "iframe", exclude: true },
+    ],
+  } as any)
+}
+
 export class BeheadSession {
   private readonly pageConfigurations = new WeakMap<Page, Promise<void>>()
 
@@ -270,7 +333,6 @@ export class BeheadBrowser {
     const browser = await chromium.launch({
       args: [
         `--user-agent=${fingerprint.userAgent}`,
-        "--disable-features=SharedWorker",
       ],
       channel: "chromium",
       headless: true,
@@ -278,14 +340,19 @@ export class BeheadBrowser {
       timeout: options.timeout,
     })
 
-    return new BeheadBrowser(browser, fingerprint, true)
+    try {
+      await attachWorkerFingerprint(browser, fingerprint)
+      return new BeheadBrowser(browser, fingerprint, true)
+    } catch (error) {
+      await browser.close().catch(() => undefined)
+      throw error
+    }
   }
 
   async newSession(options: BeheadSessionOptions = {}): Promise<BeheadSession> {
     const context = await this.browser.newContext({
       acceptDownloads: options.acceptDownloads,
       baseURL: options.baseURL,
-      serviceWorkers: this.headless ? "block" : "allow",
       storageState: options.storageState,
       viewport: null,
     })
