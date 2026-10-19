@@ -23,9 +23,24 @@ Running Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromi
 - Uses full Chromium's modern headless mode (`channel: "chromium"`, `headless: true`) instead of `chromium-headless-shell`.
 - Derives the real browser version, platform, architecture, bitness, form factors, and UA Client Hints dynamically from the installed binary — works across Linux, macOS, and Windows with zero hardcoded values.
 - Removes `HeadlessChrome` identifiers while preserving every other native browser-provided value.
+- Strips Playwright's default `--hide-scrollbars` flag in headless mode so layout scrollbar measurements (`15px`) match headful desktop sessions.
 - Keeps HTTP request headers, page JavaScript, popups, dedicated workers, shared workers, and service workers internally consistent.
 - Attaches CDP `Emulation.setUserAgentOverride` automatically to page, iframe, `shared_worker`, and `service_worker` targets on creation so popups, `context.newPage()`, and all worker scopes inherit full high-entropy Client Hints automatically.
 - Uses no `addInitScript`, navigator prototype tampering, hardcoded User-Agent strings, or Xvfb.
+
+## Headless Comparison (`headless: true`, no Xvfb)
+
+| Check / Detector | Patchright (Standalone) | CloakBrowser (Standalone) | Behead Browser |
+| :--- | :--- | :--- | :--- |
+| **CreepJS `headless`** | `67%` (`HeadlessChrome` in UA & Workers) | `0%` | **`0%`** |
+| **CreepJS `stealth`** | `0%` | `0%` | **`0%`** |
+| **CreepJS `lies`** | `0` | `5` (Canvas, AudioBuffer, DOMRect noise) | **`0`** |
+| **CDP `Runtime.enable` Leak** | Not sent | Sent (uses stock `playwright-core`) | **Not sent** |
+| **Worker High-Entropy Client Hints** | Leaks `HeadlessChrome` (or blank if `--user-agent` is set) | Populated | **Populated (`Page`, `Worker`, `SharedWorker`, `ServiceWorker`)** |
+| **Headless Scrollbar Width** | `0px` (`--hide-scrollbars` injected) | `0px` (`--hide-scrollbars` injected) | **`15px` (native desktop)** |
+| **Cloudflare Turnstile (`cf_clearance`)** | Fails in headless | Passes | **Passes** |
+| **BrowserScan Bot Detection** | Fails (`HeadlessChrome` UA) | Normal | **Normal** |
+| **SannySoft (`bot.sannysoft.com`)** | Fails (`HeadlessChrome` UA) | `0` failed checks | **`0` failed checks** |
 
 ## Setup
 
