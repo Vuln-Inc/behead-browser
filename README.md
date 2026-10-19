@@ -7,45 +7,40 @@
 ---
 
 <p align="center">
-  Undetected, display-free headless Chromium on top of <a href="https://github.com/Kaliiiiiiiiii-Vinyzu/patchright">Patchright</a> with full User-Agent Client Hints, worker target alignment, and optional C++-level hardware/GPU spoofing via the <a href="https://github.com/Vuln-Inc/behead-browser/tree/cloak"><code>cloak</code></a> branch.
+  Undetected, display-free headless Chromium on top of <a href="https://github.com/Kaliiiiiiiiii-Vinyzu/patchright">Patchright</a> with full User-Agent Client Hints, worker target alignment, and optional C++ hardware/GPU spoofing via the <a href="https://github.com/Vuln-Inc/behead-browser/tree/cloak"><code>cloak</code></a> branch.
 </p>
 
 ---
 
 ## Overview
 
-Running Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromium still exposes `HeadlessChrome` in `navigator.userAgent`, `sec-ch-ua` request headers, high-entropy `navigator.userAgentData` (`brands` and `fullVersionList`), and worker execution contexts (`Worker`, `SharedWorker`, `ServiceWorker`), while defaulting to headless layout flags that break viewport and rendering checks.
+Stock Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromium still exposes `HeadlessChrome` in `navigator.userAgent`, `sec-ch-ua` headers, high-entropy `navigator.userAgentData` (`brands` and `fullVersionList`), and worker scopes (`Worker`, `SharedWorker`, `ServiceWorker`), while passing `--user-agent` on the CLI wipes high-entropy Client Hints inside workers.
 
-**Behead Browser** eliminates those headless leaks without Xvfb, `addInitScript` injection, or prototype tampering. It probes the installed Chromium binary once per process on a local loopback origin, preserves the native host OS, architecture, bitness, form factors, and browser version, and attaches browser-level CDP target listeners to synchronize Client Hints across pages, iframes, popups, dedicated workers, shared workers, and service workers before worker scripts execute.
+**Behead Browser** eliminates these headless leaks without Xvfb, `addInitScript` injection, or prototype tampering:
+- Probes the installed Chromium binary once per process on a local loopback origin and preserves the native host OS, architecture, bitness, form factors, and browser version.
+- Attaches browser-level CDP target listeners (`Target.setAutoAttach`) to apply `Emulation.setUserAgentOverride` across pages, iframes, popups, dedicated workers, shared workers, and service workers (including cached Service Workers on reopened persistent profiles).
+- Strips Playwright's default headless `--hide-scrollbars` flag and defaults to `viewport: null`.
 
-## Branches: Stock Engine (`main`) vs Hardware Spoofing Engine (`cloak`)
+## Branches
 
-- **`main` (Stock Patchright Engine):** Zero-lie headless wrapper around stock Patchright Chromium. Preserves your machine's real native hardware and OS while eliminating `HeadlessChrome` leaks across HTTP headers, pages, popups, and all worker scopes (`0% headless`, `0% stealth`, `0 lies` on CreepJS).
-- **[`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak) (CloakBrowser C++ Engine over Patchright):** Drives CloakBrowser's C++-patched Chromium binary through Patchright instead of unpatched `playwright-core`. Eliminates `SwiftShader` WebGL hardware leaks on GPU-less Linux VPS servers (`likeHeadlessRating: 25%`, `headlessRating: 0%`, `stealthRating: 0%`), rotates hardware GPUs (`NVIDIA GeForce RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`), CPU cores, and RAM per session seed (`fingerprintSeed`), and defaults to zero-lie mode (`fingerprintNoise: false` by default -> `0 lies` on CreepJS).
-
-## What It Does
-
-- Uses full Chromium's modern headless mode (`channel: "chromium"`, `headless: true`) instead of `chromium-headless-shell`.
-- Derives the real browser version, platform, architecture, bitness, form factors, and UA Client Hints dynamically from the installed binary — works across Linux, macOS, and Windows with zero hardcoded values.
-- Removes `HeadlessChrome` identifiers while preserving every other native browser-provided value.
-- Keeps HTTP request headers, page JavaScript, popups, dedicated workers, shared workers, and service workers internally consistent.
-- Attaches CDP `Emulation.setUserAgentOverride` automatically to page, iframe, `shared_worker`, and `service_worker` targets on creation so popups, `context.newPage()`, and all worker scopes (including cached Service Workers on reopened persistent profiles) inherit full high-entropy Client Hints automatically.
-- Uses no `addInitScript`, navigator prototype tampering, hardcoded User-Agent strings, or Xvfb.
+- **`main` (Stock Patchright Engine):** Zero-lie wrapper around stock Patchright Chromium. Preserves native host hardware and OS (`0% headless`, `0% stealth`, `0 lies` on CreepJS).
+- **[`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak) (CloakBrowser C++ Engine over Patchright):** Drives CloakBrowser's C++-patched Chromium binary via Patchright instead of unpatched `playwright-core`. Replaces `SwiftShader` on GPU-less Linux VPS servers with seed-rotated hardware GPUs (`RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`), CPU cores, and RAM (`fingerprintSeed`), and defaults to zero-lie mode (`fingerprintNoise: false` -> `0 lies`, `25% likeHeadlessRating` on CreepJS, `0` failed checks on SannySoft).
 
 ## Headless Comparison (`headless: true`, no Xvfb, GPU-less Linux VPS)
 
-| Detector / Metric | Patchright (Standalone) | CloakBrowser (Standalone) | Behead Browser (`main`) | Behead Browser ([`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak)) |
-| :--- | :--- | :--- | :--- | :--- |
-| **CreepJS `headlessRating`** | `67%` (`HeadlessChrome` in UA & Workers) | `0%` | **`0%`** | **`0%`** |
-| **CreepJS `stealthRating`** | `0%` | `0%` | **`0%`** | **`0%`** |
-| **CreepJS `likeHeadlessRating` (GPU-less VPS)** | `50%` (`SwiftShader`) | `31%` (`hasVvpScreenRes` viewport mismatch) | **`50%`** (`SwiftShader`) | **`25%` (Hardware GPU, no SwiftShader)** |
-| **CreepJS `liesCount`** | `0` | `5` (Canvas, AudioBuffer, DOMRect noise) | **`0`** | **`0`** (default) |
-| **CDP `Runtime.enable` Leak** | Not sent | Sent (uses stock `playwright-core`) | **Not sent** | **Not sent** |
-| **Worker High-Entropy Client Hints** | Leaks `HeadlessChrome` (or blank if `--user-agent` is set) | Populated | **Populated (`Page`, `Worker`, `SharedWorker`, `ServiceWorker`)** | **Populated (`Page`, `Worker`, `SharedWorker`, `ServiceWorker`)** |
-| **Hardware / GPU Fingerprint Rotation** | None (`SwiftShader` on VPS) | Per-seed (`--fingerprint=<seed>`) | Native host hardware | **Per-seed (`fingerprintSeed`, real RTX GPUs)** |
-| **Cloudflare Turnstile (`cf_clearance`)** | Fails in headless | Passes | **Passes** | **Passes** |
-| **BrowserScan Bot Detection** | Fails (`HeadlessChrome` UA) | Normal | **Normal** | **Normal** |
-| **SannySoft (`bot.sannysoft.com`)** | Fails (`HeadlessChrome` UA) | `0` failed checks | **`0` failed checks** | **`0` failed checks** |
+Reproduce locally with `bun run bench` (`src/bench.ts`).
+
+| Metric / Detector | Stock Playwright | Puppeteer-Extra-Stealth | Patchright (Standalone) | CloakBrowser (Standalone) | Behead (`main`) | Behead ([`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak)) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **CDP `Runtime.enable` Leak** | Leaked | Leaked | **Not sent** | Leaked (`playwright-core`) | **Not sent** | **Not sent** |
+| **CreepJS `headlessRating`** | `100%` | `38%+` | `67%` | `0%` | **`0%`** | **`0%`** |
+| **CreepJS `stealthRating`** | `0%` | `40%+` (JS proxy traps) | `0%` | `0%` | **`0%`** | **`0%`** |
+| **CreepJS `likeHeadlessRating` (no GPU)** | `69%+` | `56%+` | `50%` (`SwiftShader`) | `31%` (`hasVvpScreenRes`) | **`50%`** (`SwiftShader`) | **`25%` (Hardware GPU)** |
+| **CreepJS `liesCount`** | `0` | `12+` (prototype lies) | `0` | `5` (Canvas/Audio/Rects) | **`0`** | **`0`** (default) |
+| **Worker High-Entropy Client Hints** | `HeadlessChrome` | Blank / Mismatched | `HeadlessChrome` | Populated | **Populated (All Workers)** | **Populated (All Workers)** |
+| **Hardware / GPU Rotation** | None (`SwiftShader`) | None (`SwiftShader`) | None (`SwiftShader`) | Per-seed (`--fingerprint`) | Native host hardware | **Per-seed (`fingerprintSeed`)** |
+| **SannySoft Failed Checks** | `5` (`webdriver` + UA + WebGL) | `1` (`SwiftShader` WebGL) | `4` (`HeadlessChrome` UA + WebGL) | `0` | **`1`** (`SwiftShader` WebGL) | **`0` (Hardware GPU)** |
+| **Cloudflare Turnstile (`cf_clearance`)** | Fails | Fails | Passes | Passes | **Passes** | **Passes** |
 
 ## Setup
 
@@ -53,90 +48,41 @@ Running Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromi
 bun install
 bunx patchright install chromium
 bun test
-bun run build
-```
-
-Run the example:
-
-```bash
-bun run start
-```
-
-Run an optional live Google smoke test:
-
-```bash
-bun run smoke:google -- "your query"
+bun run bench
 ```
 
 ## Usage
 
 ```ts
-import { launchBeheadBrowser } from "./src/index.js"
+import { launchBeheadBrowser, launchPersistentBeheadSession } from "./src/index.js"
 
-const browser = await launchBeheadBrowser()
-
-try {
-  const session = await browser.newSession()
-  const page = await session.newPage()
-
-  await page.goto("https://example.com")
-  console.log(await page.title())
-
-  await session.close()
-} finally {
-  await browser.close()
-}
-```
-
-`session.context` remains available for cookies, permissions, storage state, downloads, and other normal Playwright APIs. Pages created through `session.newPage()`, `session.context.newPage()`, or `window.open()` popups automatically receive the Client Hints configuration.
-
-## Persistent Profile & Session State
-
-Launch a persistent profile directory on disk:
-
-```ts
-import { launchPersistentBeheadSession } from "./src/index.js"
-
-const session = await launchPersistentBeheadSession("./user-data")
-const page = await session.newPage()
-```
-
-Or save and restore cookies and local storage using Playwright storage state:
-
-```ts
-const state = await session.context.storageState({ path: "state.json" })
-const nextSession = await browser.newSession({ storageState: state })
-```
-
-## Proxy
-
-```ts
+// Ephemeral session
 const browser = await launchBeheadBrowser({
-  proxy: {
-    server: "http://127.0.0.1:8080",
-    username: "user",
-    password: "password",
-  },
+  proxy: { server: "http://127.0.0.1:8080" }, // optional
 })
+const session = await browser.newSession()
+const page = await session.newPage()
+await page.goto("https://example.com")
+await browser.close()
+
+// Persistent profile on disk
+const persistent = await launchPersistentBeheadSession("./user-data")
+const persistentPage = await persistent.newPage()
+await persistent.close()
 ```
 
-## Hardware Spoofing & Fingerprint Rotation (`cloak` branch)
-
-When running headless on a GPU-less Linux VPS where `SwiftShader` WebGL rendering or identical hardware hashes across sessions are undesirable, switch to the [`cloak`](https://github.com/Vuln-Inc/behead-browser/tree/cloak) branch:
+### Hardware Spoofing & Seed Rotation (`cloak` branch)
 
 ```bash
-git checkout cloak
-bun install
+git checkout cloak && bun install
 ```
 
 ```ts
 import { launchBeheadBrowser } from "./src/index.js"
 
 const browser = await launchBeheadBrowser({
-  fingerprintSeed: 55123,
+  fingerprintSeed: 55123, // rotates hardware GPU, cores, and RAM (0 lies by default)
   timezone: "America/New_York",
   locale: "en-US",
 })
 ```
-
-Do not layer generic "stealth" scripts on top. In particular, avoid redefining `navigator.webdriver`, `navigator.languages`, `navigator.userAgentData`, or `window.chrome`; those modifications commonly create contradictions that are easier to detect than Patchright itself.
