@@ -121,6 +121,17 @@ describe("Behead Patchright fingerprint", () => {
           webdriver: navigator.webdriver,
           ownsWebdriver: Object.prototype.hasOwnProperty.call(navigator, "webdriver"),
           ownsLanguages: Object.prototype.hasOwnProperty.call(navigator, "languages"),
+          scrollbarWidth: (() => {
+            const outer = document.createElement("div")
+            outer.style.visibility = "hidden"
+            outer.style.overflow = "scroll"
+            document.body.appendChild(outer)
+            const inner = document.createElement("div")
+            outer.appendChild(inner)
+            const width = outer.offsetWidth - inner.offsetWidth
+            outer.remove()
+            return width
+          })(),
         }
       })
       const dedicatedWorker = await page.evaluate(() => new Promise<any>((resolve, reject) => {
@@ -217,6 +228,7 @@ describe("Behead Patchright fingerprint", () => {
       expect(main.webdriver).toBe(false)
       expect(main.ownsWebdriver).toBe(false)
       expect(main.ownsLanguages).toBe(false)
+      expect(main.scrollbarWidth).toBeGreaterThan(0)
 
       await session.close()
     } finally {

@@ -157,11 +157,14 @@ const cachedFingerprints = new Map<string, Promise<BeheadFingerprint>>()
 async function detectFingerprint(
   channel: string,
   executablePath?: string,
+  args: string[] = [],
 ): Promise<BeheadFingerprint> {
   const browser = await chromium.launch({
+    args,
     channel: executablePath ? undefined : channel,
     executablePath,
     headless: true,
+    ignoreDefaultArgs: ["--hide-scrollbars"],
   })
 
   try {
@@ -174,11 +177,12 @@ async function detectFingerprint(
 async function getFingerprint(
   channel: string,
   executablePath?: string,
+  args: string[] = [],
 ): Promise<BeheadFingerprint> {
-  const cacheKey = executablePath ? `path:${executablePath}` : `channel:${channel}`
+  const cacheKey = `${executablePath ? `path:${executablePath}` : `channel:${channel}`}|args:${args.join("\0")}`
   let pending = cachedFingerprints.get(cacheKey)
   if (!pending) {
-    pending = detectFingerprint(channel, executablePath)
+    pending = detectFingerprint(channel, executablePath, args)
     cachedFingerprints.set(cacheKey, pending)
   }
 
@@ -188,6 +192,18 @@ async function getFingerprint(
     cachedFingerprints.delete(cacheKey)
     throw error
   }
+}
+
+function mergeIgnoreDefaultArgs(
+  ignoreDefaultArgs: boolean | string[] | undefined,
+): boolean | string[] {
+  if (ignoreDefaultArgs === true) {
+    return true
+  }
+  if (Array.isArray(ignoreDefaultArgs)) {
+    return Array.from(new Set([...ignoreDefaultArgs, "--hide-scrollbars"]))
+  }
+  return ["--hide-scrollbars"]
 }
 
 async function applyFingerprint(page: Page, fingerprint: BeheadFingerprint): Promise<void> {
@@ -393,8 +409,8 @@ export class BeheadBrowser {
       }
     }
 
-    const fingerprint = await getFingerprint(channel, options.executablePath)
     const filteredArgs = userArgs.filter((arg) => !arg.startsWith("--user-agent="))
+    const fingerprint = await getFingerprint(channel, options.executablePath, filteredArgs)
     const browser = await chromium.launch({
       ...options,
       args: [
@@ -403,6 +419,7 @@ export class BeheadBrowser {
       ],
       channel: options.executablePath ? options.channel : channel,
       headless: true,
+      ignoreDefaultArgs: mergeIgnoreDefaultArgs(options.ignoreDefaultArgs),
     })
 
     try {
@@ -448,8 +465,8 @@ export class BeheadBrowser {
       }
     }
 
-    const fingerprint = await getFingerprint(channel, options.executablePath)
     const filteredArgs = userArgs.filter((arg) => !arg.startsWith("--user-agent="))
+    const fingerprint = await getFingerprint(channel, options.executablePath, filteredArgs)
     const context = await chromium.launchPersistentContext(userDataDir, {
       ...options,
       args: [
@@ -458,6 +475,7 @@ export class BeheadBrowser {
       ],
       channel: options.executablePath ? options.channel : channel,
       headless: true,
+      ignoreDefaultArgs: mergeIgnoreDefaultArgs(options.ignoreDefaultArgs),
       viewport,
     })
 
