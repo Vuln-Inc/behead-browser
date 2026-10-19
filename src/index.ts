@@ -6,6 +6,10 @@ import {
   type LaunchOptions,
   type Page,
 } from "patchright"
+import {
+  buildLaunchOptions as buildCloakLaunchOptions,
+  type LaunchOptions as CloakLaunchOptions,
+} from "cloakbrowser"
 
 interface BrandVersion {
   brand: string
@@ -46,14 +50,28 @@ export interface BeheadFingerprint {
   }
 }
 
-export type BeheadLaunchOptions = LaunchOptions
+export interface CloakSpecificOptions {
+  fingerprintSeed?: number
+  fingerprintNoise?: boolean
+  stealthArgs?: boolean
+  timezone?: string
+  locale?: string
+  geoip?: boolean
+  licenseKey?: string
+  browserVersion?: string
+  releaseChannel?: "stable" | "preview"
+  extensionPaths?: string[]
+}
+
+export type BeheadLaunchOptions = LaunchOptions & CloakSpecificOptions
 
 export type BeheadSessionOptions = Omit<BrowserContextOptions, "userAgent">
 
 export type BeheadPersistentOptions = Omit<
-   NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>,
+  NonNullable<Parameters<typeof chromium.launchPersistentContext>[1]>,
   "userAgent"
->
+> &
+  CloakSpecificOptions
 
 export function buildBeheadFingerprint(
   native: NativeHeadlessFingerprint,
@@ -101,8 +119,6 @@ async function readNativeFingerprint(
   const probe = await target.newPage()
 
   try {
-    // localhost is a trustworthy origin, so Chromium exposes UA Client Hints.
-    // Fulfilling it locally avoids leaking the probe fingerprint to a website.
     await probe.route("http://localhost/**", (route) =>
       route.fulfill({
         status: 200,
@@ -112,7 +128,7 @@ async function readNativeFingerprint(
     )
     await probe.goto("http://localhost/behead-fingerprint")
 
-    const fingerprint = await probe.evaluate(async () => {
+    const fingerprint = (await probe.evaluate(async () => {
       const userAgentData = (navigator as any).userAgentData
       if (!userAgentData) return null
 
@@ -140,7 +156,7 @@ async function readNativeFingerprint(
         wow64: highEntropy.wow64,
         formFactors: highEntropy.formFactors,
       }
-    }) as NativeHeadlessFingerprint | null
+    })) as NativeHeadlessFingerprint | null
 
     if (!fingerprint) {
       throw new Error("Chromium did not expose User-Agent Client Hints")
@@ -155,7 +171,7 @@ async function readNativeFingerprint(
 const cachedFingerprints = new Map<string, Promise<BeheadFingerprint>>()
 
 async function detectFingerprint(
-  channel: string,
+  channel: string | undefined,
   executablePath?: string,
   args: string[] = [],
 ): Promise<BeheadFingerprint> {
@@ -164,7 +180,7 @@ async function detectFingerprint(
     channel: executablePath ? undefined : channel,
     executablePath,
     headless: true,
-    ignoreDefaultArgs: ["--hide-scrollbars"],
+    ignoreDefaultArgs: ["--hide-scrollbars", "--enable-automation", "--enable-unsafe-swiftshader"],
   })
 
   try {
@@ -175,11 +191,12 @@ async function detectFingerprint(
 }
 
 async function getFingerprint(
-  channel: string,
+  channel: string | undefined,
   executablePath?: string,
   args: string[] = [],
 ): Promise<BeheadFingerprint> {
-  const cacheKey = `${executablePath ? `path:${executablePath}` : `channel:${channel}`}|args:${args.join("\0")}`
+  const stableArgs = args.filter((arg) => !arg.startsWith("--fingerprint="))
+  const cacheKey = `${executablePath ? `path:${executablePath}` : `channel:${channel ?? "default"}`}|args:${stableArgs.join("\0")}`
   let pending = cachedFingerprints.get(cacheKey)
   if (!pending) {
     pending = detectFingerprint(channel, executablePath, args)
@@ -196,14 +213,79 @@ async function getFingerprint(
 
 function mergeIgnoreDefaultArgs(
   ignoreDefaultArgs: boolean | string[] | undefined,
+  extraDefaults: string[] = [],
 ): boolean | string[] {
   if (ignoreDefaultArgs === true) {
     return true
   }
-  if (Array.isArray(ignoreDefaultArgs)) {
-    return Array.from(new Set([...ignoreDefaultArgs, "--hide-scrollbars"]))
+  const base = Array.isArray(ignoreDefaultArgs) ? ignoreDefaultArgs : []
+  return Array.from(
+    new Set([
+      ...base,
+      ...extraDefaults,
+      "--hide-scrollbars",
+      "--enable-automation",
+      "--enable-unsafe-swiftshader",
+    ]),
+  )
+}
+
+async function resolveCloakConfig(
+  options: BeheadLaunchOptions | BeheadPersistentOptions,
+): Promise<{
+  executablePath?: string
+  args: string[]
+  ignoreDefaultArgs: boolean | string[]
+  proxy?: LaunchOptions["proxy"]
+  env?: LaunchOptions["env"]
+}> {
+  const userArgs = [...(options.args ?? [])]
+  if (options.fingerprintSeed !== undefined && !userArgs.some((a) => a.startsWith("--fingerprint="))) {
+    userArgs.push(`--fingerprint=${options.fingerprintSeed}`)
   }
-  return ["--hide-scrollbars"]
+  if (
+    options.fingerprintNoise === false &&
+    !userArgs.some((a) => a.startsWith("--fingerprint-noise="))
+  ) {
+    userArgs.push("--fingerprint-noise=false")
+  }
+
+  if (options.executablePath || options.channel) {
+    return {
+      executablePath: options.executablePath,
+      args: userArgs,
+      ignoreDefaultArgs: mergeIgnoreDefaultArgs(options.ignoreDefaultArgs),
+      proxy: options.proxy,
+      env: options.env as LaunchOptions["env"],
+    }
+  }
+
+  const cloakOpts: CloakLaunchOptions = {
+    headless: options.headless ?? true,
+    proxy: options.proxy,
+    args: userArgs,
+    stealthArgs: options.stealthArgs,
+    timezone: options.timezone,
+    locale: options.locale,
+    geoip: options.geoip,
+    licenseKey: options.licenseKey,
+    browserVersion: options.browserVersion,
+    releaseChannel: options.releaseChannel,
+    extensionPaths: options.extensionPaths,
+    launchOptions: options.env ? { env: options.env } : undefined,
+  }
+  const resolved = (await buildCloakLaunchOptions(cloakOpts)) as any
+
+  return {
+    executablePath: resolved.executablePath,
+    args: resolved.args ?? userArgs,
+    ignoreDefaultArgs: mergeIgnoreDefaultArgs(
+      options.ignoreDefaultArgs,
+      Array.isArray(resolved.ignoreDefaultArgs) ? resolved.ignoreDefaultArgs : [],
+    ),
+    proxy: resolved.proxy ?? options.proxy,
+    env: resolved.env ?? (options.env as LaunchOptions["env"]),
+  }
 }
 
 async function applyFingerprint(page: Page, fingerprint: BeheadFingerprint): Promise<void> {
@@ -378,6 +460,23 @@ export class BeheadSession {
   }
 }
 
+function stripCloakOptions<T extends Record<string, any>>(options: T): Omit<T, keyof CloakSpecificOptions> {
+  const {
+    fingerprintSeed: _fingerprintSeed,
+    fingerprintNoise: _fingerprintNoise,
+    stealthArgs: _stealthArgs,
+    timezone: _timezone,
+    locale: _locale,
+    geoip: _geoip,
+    licenseKey: _licenseKey,
+    browserVersion: _browserVersion,
+    releaseChannel: _releaseChannel,
+    extensionPaths: _extensionPaths,
+    ...rest
+  } = options
+  return rest
+}
+
 export class BeheadBrowser {
   private constructor(
     public readonly browser: Browser,
@@ -386,15 +485,20 @@ export class BeheadBrowser {
   ) {}
 
   static async launch(options: BeheadLaunchOptions = {}): Promise<BeheadBrowser> {
-    const channel = options.channel ?? "chromium"
     const headless = options.headless ?? true
-    const userArgs = options.args ?? []
+    const cloakConfig = await resolveCloakConfig(options)
+    const cleanOptions = stripCloakOptions(options)
 
     if (!headless) {
       const browser = await chromium.launch({
-        ...options,
-        channel: options.executablePath ? options.channel : channel,
+        ...cleanOptions,
+        args: cloakConfig.args,
+        channel: cloakConfig.executablePath ? undefined : options.channel,
+        executablePath: cloakConfig.executablePath,
         headless: false,
+        ignoreDefaultArgs: cloakConfig.ignoreDefaultArgs,
+        proxy: cloakConfig.proxy,
+        env: cloakConfig.env,
       })
 
       try {
@@ -409,17 +513,24 @@ export class BeheadBrowser {
       }
     }
 
-    const filteredArgs = userArgs.filter((arg) => !arg.startsWith("--user-agent="))
-    const fingerprint = await getFingerprint(channel, options.executablePath, filteredArgs)
+    const filteredArgs = cloakConfig.args.filter((arg) => !arg.startsWith("--user-agent="))
+    const fingerprint = await getFingerprint(
+      options.channel,
+      cloakConfig.executablePath,
+      filteredArgs,
+    )
     const browser = await chromium.launch({
-      ...options,
+      ...cleanOptions,
       args: [
         ...filteredArgs,
         `--user-agent=${fingerprint.userAgent}`,
       ],
-      channel: options.executablePath ? options.channel : channel,
+      channel: cloakConfig.executablePath ? undefined : options.channel,
+      executablePath: cloakConfig.executablePath,
       headless: true,
-      ignoreDefaultArgs: mergeIgnoreDefaultArgs(options.ignoreDefaultArgs),
+      ignoreDefaultArgs: cloakConfig.ignoreDefaultArgs,
+      proxy: cloakConfig.proxy,
+      env: cloakConfig.env,
     })
 
     try {
@@ -435,16 +546,21 @@ export class BeheadBrowser {
     userDataDir: string,
     options: BeheadPersistentOptions = {},
   ): Promise<BeheadSession> {
-    const channel = options.channel ?? "chromium"
     const headless = options.headless ?? true
-    const userArgs = options.args ?? []
     const viewport = options.viewport === undefined ? null : options.viewport
+    const cloakConfig = await resolveCloakConfig(options)
+    const cleanOptions = stripCloakOptions(options)
 
     if (!headless) {
       const context = await chromium.launchPersistentContext(userDataDir, {
-        ...options,
-        channel: options.executablePath ? options.channel : channel,
+        ...cleanOptions,
+        args: cloakConfig.args,
+        channel: cloakConfig.executablePath ? undefined : options.channel,
+        executablePath: cloakConfig.executablePath,
         headless: false,
+        ignoreDefaultArgs: cloakConfig.ignoreDefaultArgs,
+        proxy: cloakConfig.proxy,
+        env: cloakConfig.env,
         viewport,
       })
 
@@ -465,17 +581,24 @@ export class BeheadBrowser {
       }
     }
 
-    const filteredArgs = userArgs.filter((arg) => !arg.startsWith("--user-agent="))
-    const fingerprint = await getFingerprint(channel, options.executablePath, filteredArgs)
+    const filteredArgs = cloakConfig.args.filter((arg) => !arg.startsWith("--user-agent="))
+    const fingerprint = await getFingerprint(
+      options.channel,
+      cloakConfig.executablePath,
+      filteredArgs,
+    )
     const context = await chromium.launchPersistentContext(userDataDir, {
-      ...options,
+      ...cleanOptions,
       args: [
         ...filteredArgs,
         `--user-agent=${fingerprint.userAgent}`,
       ],
-      channel: options.executablePath ? options.channel : channel,
+      channel: cloakConfig.executablePath ? undefined : options.channel,
+      executablePath: cloakConfig.executablePath,
       headless: true,
-      ignoreDefaultArgs: mergeIgnoreDefaultArgs(options.ignoreDefaultArgs),
+      ignoreDefaultArgs: cloakConfig.ignoreDefaultArgs,
+      proxy: cloakConfig.proxy,
+      env: cloakConfig.env,
       viewport,
     })
 

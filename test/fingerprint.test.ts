@@ -324,11 +324,12 @@ describe("Behead Patchright fingerprint", () => {
         const initialPage = session1.context.pages()[0] ?? (await session1.context.newPage())
         await initialPage.goto(`${baseUrl}/persistent-test`)
         await initialPage.evaluate(async () => {
-          await navigator.serviceWorker.register("/sw.js")
-          await new Promise<void>((resolve) => {
+          const controllerReady = new Promise<void>((resolve) => {
             if (navigator.serviceWorker.controller) return resolve()
             navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true })
           })
+          await navigator.serviceWorker.register("/sw.js")
+          await controllerReady
         })
       } finally {
         await session1.close()
@@ -372,6 +373,41 @@ describe("Behead Patchright fingerprint", () => {
     } finally {
       server.close()
       rmSync(userDataDir, { recursive: true, force: true })
+    }
+  }, 30_000)
+
+  test("rotates hardware GPU fingerprint by seed without SwiftShader", async () => {
+    const b1 = await launchBeheadBrowser({ fingerprintSeed: 10001, fingerprintNoise: false })
+    const b2 = await launchBeheadBrowser({ fingerprintSeed: 20002, fingerprintNoise: false })
+
+    try {
+      const s1 = await b1.newSession()
+      const s2 = await b2.newSession()
+      const p1 = await s1.newPage()
+      const p2 = await s2.newPage()
+
+      const readGpu = (page: any) =>
+        page.evaluate(() => {
+          const canvas = document.createElement("canvas")
+          const gl = canvas.getContext("webgl")
+          const dbg = gl?.getExtension("WEBGL_debug_renderer_info")
+          return dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : null
+        })
+
+      const gpu1 = await readGpu(p1)
+      const gpu2 = await readGpu(p2)
+
+      expect(gpu1).toBeTruthy()
+      expect(gpu2).toBeTruthy()
+      expect(gpu1).not.toContain("SwiftShader")
+      expect(gpu2).not.toContain("SwiftShader")
+      expect(gpu1).not.toBe(gpu2)
+
+      await s1.close()
+      await s2.close()
+    } finally {
+      await b1.close()
+      await b2.close()
     }
   }, 30_000)
 })
