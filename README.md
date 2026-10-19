@@ -19,21 +19,20 @@
 - **Zero-Lie Mode by Default (`fingerprintNoise: false`):** Disables CloakBrowser's Canvas/Audio/DOMRect noise perturbations by default (`0 lies` on CreepJS) while keeping hardware/GPU seed rotation active. Pass `fingerprintNoise: true` to enable Canvas/Audio/DOMRect perturbation.
 - **Coherent Headless Window & Worker Alignment:** Defaults to `viewport: null`, strips `--hide-scrollbars`, and synchronizes high-entropy Client Hints across pages, popups, dedicated workers, shared workers, and service workers (including cached Service Workers on reopened persistent profiles).
 
-## Headless Comparison (`headless: true`, no Xvfb, GPU-less Linux VPS)
+## Detector Benchmark (`bun run bench`)
 
-Reproduce locally with `bun run bench` (`src/bench.ts`).
-
-| Metric / Detector | Stock Playwright | Puppeteer-Extra-Stealth | Patchright (Standalone) | CloakBrowser (Standalone) | Behead ([`main`](https://github.com/Vuln-Inc/behead-browser)) | Behead (`cloak` — this branch) |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **CDP `Runtime.enable` Leak** | Leaked | Leaked | **Not sent** | Leaked (`playwright-core`) | **Not sent** | **Not sent** |
-| **CreepJS `headlessRating`** | `100%` | `38%+` | `67%` | `0%` | **`0%`** | **`0%`** |
-| **CreepJS `stealthRating`** | `0%` | `40%+` (JS proxy traps) | `0%` | `0%` | **`0%`** | **`0%`** |
-| **CreepJS `likeHeadlessRating` (no GPU)** | `69%+` | `56%+` | `50%` (`SwiftShader`) | `31%` (`hasVvpScreenRes`) | **`50%`** (`SwiftShader`) | **`25%` (Hardware GPU)** |
-| **CreepJS `liesCount`** | `0` | `12+` (prototype lies) | `0` | `5` (Canvas/Audio/Rects) | **`0`** | **`0`** (default) |
-| **Worker High-Entropy Client Hints** | `HeadlessChrome` | Blank / Mismatched | `HeadlessChrome` | Populated | **Populated (All Workers)** | **Populated (All Workers)** |
-| **Hardware / GPU Rotation** | None (`SwiftShader`) | None (`SwiftShader`) | None (`SwiftShader`) | Per-seed (`--fingerprint`) | Native host hardware | **Per-seed (`fingerprintSeed`)** |
-| **SannySoft Failed Checks** | `5` (`webdriver` + UA + WebGL) | `1` (`SwiftShader` WebGL) | `4` (`HeadlessChrome` UA + WebGL) | `0` | **`1`** (`SwiftShader` WebGL) | **`0` (Hardware GPU)** |
-| **Cloudflare Turnstile (`cf_clearance`)** | Fails | Fails | Passes | Passes | **Passes** | **Passes** |
+| Metric / Detector | Stock Playwright (Headless) | Puppeteer-Extra-Stealth (Headless) | Patchright (Standalone Headless) | CloakBrowser (Standalone Headless) | **Patchright (Headed Baseline)** | **Behead ([`main`](https://github.com/Vuln-Inc/behead-browser) Headless)** | **Behead (`cloak` Headless)** |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **CDP `Runtime.enable` Leak** | Leaked | Leaked | Not sent | Leaked (`playwright-core`) | **Not sent** | **Not sent** | **Not sent** |
+| **CreepJS `headlessRating`** | `100%` | `38%+` | `67%` | `0%` | **`0%`** | **`0%` (1:1)** | **`0%`** |
+| **CreepJS `stealthRating`** | `0%` | `40%+` (JS proxy traps) | `0%` | `0%` | **`0%`** | **`0%` (1:1)** | **`0%`** |
+| **CreepJS `likeHeadlessRating`** | `69%+` | `56%+` | `50%` | `31%` (`hasVvpScreenRes`) | **`38%`** (Linux desktop baseline) | **`38%` (1:1)** | **`25%`** (Windows C++ profile) |
+| **CreepJS `hasSwiftShader`** | `true` | `true` | `true` | `false` | **`false`** | **`false` (1:1)** | **`false`** (Even on GPU-less VPS) |
+| **CreepJS `noTaskbar`** | `true` | `true` | `true` (`800x600`) | `false` | **`false`** | **`false` (1:1)** | **`false`** |
+| **CreepJS `liesCount`** | `0` | `12+` (prototype lies) | `0` | `5` (Canvas/Audio/Rects) | **`0`** | **`0` (1:1)** | **`0`** (default) |
+| **Worker High-Entropy Client Hints** | `HeadlessChrome` | Blank / Mismatched | `HeadlessChrome` | Populated | **Populated (All Workers)** | **Populated (1:1)** | **Populated (All Workers)** |
+| **SannySoft Failed Checks** | `5` | `1` (`SwiftShader`) | `4` (`HeadlessChrome` + `SwiftShader`) | `0` | **`0`** | **`0` (1:1)** | **`0`** |
+| **Cloudflare Turnstile (`cf_clearance`)** | Fails | Fails | Passes | Passes | **Passes** | **Passes (1:1)** | **Passes** |
 
 ## Setup
 
