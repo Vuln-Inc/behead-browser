@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import {
   chromium,
   type Browser,
@@ -164,7 +165,7 @@ async function detectFingerprint(
     channel: executablePath ? undefined : channel,
     executablePath,
     headless: true,
-    ignoreDefaultArgs: ["--hide-scrollbars"],
+    ignoreDefaultArgs: mergeIgnoreDefaultArgs(undefined),
   })
 
   try {
@@ -194,16 +195,39 @@ async function getFingerprint(
   }
 }
 
+function hasHostGpuDevice(): boolean {
+  if (process.platform !== "linux") return true
+  return existsSync("/dev/dri") || existsSync("/dev/nvidia0")
+}
+
+function buildHeadlessArgs(userArgs: string[]): string[] {
+  const args = userArgs.filter((arg) => !arg.startsWith("--user-agent="))
+  if (!args.some((arg) => arg.startsWith("--screen-info="))) {
+    args.push("--screen-info={1920x1080 workAreaBottom=40}")
+  }
+  if (!args.some((arg) => arg.startsWith("--window-size="))) {
+    args.push("--window-size=1920,1040")
+  }
+  if (hasHostGpuDevice()) {
+    if (!args.includes("--enable-gpu")) args.push("--enable-gpu")
+    if (!args.includes("--ignore-gpu-blocklist")) args.push("--ignore-gpu-blocklist")
+  }
+  return args
+}
+
 function mergeIgnoreDefaultArgs(
   ignoreDefaultArgs: boolean | string[] | undefined,
 ): boolean | string[] {
   if (ignoreDefaultArgs === true) {
     return true
   }
+  const defaults = hasHostGpuDevice()
+    ? ["--hide-scrollbars", "--enable-unsafe-swiftshader"]
+    : ["--hide-scrollbars"]
   if (Array.isArray(ignoreDefaultArgs)) {
-    return Array.from(new Set([...ignoreDefaultArgs, "--hide-scrollbars"]))
+    return Array.from(new Set([...ignoreDefaultArgs, ...defaults]))
   }
-  return ["--hide-scrollbars"]
+  return defaults
 }
 
 async function applyFingerprint(page: Page, fingerprint: BeheadFingerprint): Promise<void> {
@@ -409,7 +433,7 @@ export class BeheadBrowser {
       }
     }
 
-    const filteredArgs = userArgs.filter((arg) => !arg.startsWith("--user-agent="))
+    const filteredArgs = buildHeadlessArgs(userArgs)
     const fingerprint = await getFingerprint(channel, options.executablePath, filteredArgs)
     const browser = await chromium.launch({
       ...options,
@@ -465,7 +489,7 @@ export class BeheadBrowser {
       }
     }
 
-    const filteredArgs = userArgs.filter((arg) => !arg.startsWith("--user-agent="))
+    const filteredArgs = buildHeadlessArgs(userArgs)
     const fingerprint = await getFingerprint(channel, options.executablePath, filteredArgs)
     const context = await chromium.launchPersistentContext(userDataDir, {
       ...options,

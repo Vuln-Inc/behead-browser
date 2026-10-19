@@ -132,6 +132,7 @@ describe("Behead Patchright fingerprint", () => {
             outer.remove()
             return width
           })(),
+          hasTaskbar: screen.availHeight < screen.height,
         }
       })
       const dedicatedWorker = await page.evaluate(() => new Promise<any>((resolve, reject) => {
@@ -229,6 +230,7 @@ describe("Behead Patchright fingerprint", () => {
       expect(main.ownsWebdriver).toBe(false)
       expect(main.ownsLanguages).toBe(false)
       expect(main.scrollbarWidth).toBeGreaterThan(0)
+      expect(main.hasTaskbar).toBe(true)
 
       await session.close()
     } finally {
@@ -324,11 +326,12 @@ describe("Behead Patchright fingerprint", () => {
         const initialPage = session1.context.pages()[0] ?? (await session1.context.newPage())
         await initialPage.goto(`${baseUrl}/persistent-test`)
         await initialPage.evaluate(async () => {
-          await navigator.serviceWorker.register("/sw.js")
-          await new Promise<void>((resolve) => {
+          const controllerReady = new Promise<void>((resolve) => {
             if (navigator.serviceWorker.controller) return resolve()
             navigator.serviceWorker.addEventListener("controllerchange", () => resolve(), { once: true })
           })
+          await navigator.serviceWorker.register("/sw.js")
+          await controllerReady
         })
       } finally {
         await session1.close()

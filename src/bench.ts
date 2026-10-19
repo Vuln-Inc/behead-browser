@@ -1,10 +1,24 @@
 import { chromium as patchrightChromium } from "patchright"
 import { launchBeheadBrowser } from "./index.js"
 
+interface BenchResult {
+  runner: string
+  creepjs: {
+    headlessRating: number
+    stealthRating: number
+    likeHeadlessRating: number
+    liesCount: number
+    hasSwiftShader: boolean
+    noTaskbar: boolean
+  }
+  sannysoftFailedChecks: number
+  cloudflareTurnstileCleared: boolean
+}
+
 async function evaluateDetectors(
   name: string,
   createSession: () => Promise<{ page: any; context: any; close: () => Promise<void> }>,
-) {
+): Promise<BenchResult> {
   const { page, context, close } = await createSession()
 
   try {
@@ -20,6 +34,8 @@ async function evaluateDetectors(
         stealthRating: window.Fingerprint?.headless?.stealthRating ?? null,
         likeHeadlessRating: window.Fingerprint?.headless?.likeHeadlessRating ?? null,
         liesCount: window.Fingerprint?.lies?.totalLies ?? 0,
+        hasSwiftShader: Boolean(window.Fingerprint?.headless?.likeHeadless?.hasSwiftShader),
+        noTaskbar: Boolean(window.Fingerprint?.headless?.likeHeadless?.noTaskbar),
       })`,
       returnByValue: true,
     })
@@ -62,7 +78,20 @@ async function evaluateDetectors(
   }
 }
 
-const results = []
+const results: BenchResult[] = []
+const canRunHeaded =
+  process.platform !== "linux" || Boolean(process.env.DISPLAY || process.env.WAYLAND_DISPLAY)
+
+if (canRunHeaded) {
+  results.push(
+    await evaluateDetectors("Patchright (Headed Baseline)", async () => {
+      const browser = await patchrightChromium.launch({ channel: "chromium", headless: false })
+      const context = await browser.newContext({ viewport: null })
+      const page = await context.newPage()
+      return { page, context, close: () => browser.close() }
+    }),
+  )
+}
 
 results.push(
   await evaluateDetectors("Patchright (Standalone Headless)", async () => {
@@ -73,13 +102,23 @@ results.push(
   }),
 )
 
-results.push(
-  await evaluateDetectors("Behead Browser (Headless)", async () => {
-    const browser = await launchBeheadBrowser({ headless: true })
-    const session = await browser.newSession()
-    const page = await session.newPage()
-    return { page, context: session.context, close: () => browser.close() }
-  }),
-)
+const beheadResult = await evaluateDetectors("Behead Browser (Headless)", async () => {
+  const browser = await launchBeheadBrowser({ headless: true })
+  const session = await browser.newSession()
+  const page = await session.newPage()
+  return { page, context: session.context, close: () => browser.close() }
+})
+results.push(beheadResult)
 
 console.log(JSON.stringify(results, null, 2))
+
+const headedBaseline = results.find((r) => r.runner === "Patchright (Headed Baseline)")
+if (headedBaseline) {
+  if (
+    JSON.stringify(beheadResult.creepjs) !== JSON.stringify(headedBaseline.creepjs) ||
+    beheadResult.sannysoftFailedChecks !== headedBaseline.sannysoftFailedChecks ||
+    beheadResult.cloudflareTurnstileCleared !== headedBaseline.cloudflareTurnstileCleared
+  ) {
+    throw new Error("Behead Browser (Headless) diverged from Patchright (Headed Baseline)")
+  }
+}

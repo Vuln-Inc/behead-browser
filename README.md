@@ -7,40 +7,44 @@
 ---
 
 <p align="center">
-  Undetected, display-free headless Chromium on top of <a href="https://github.com/Kaliiiiiiiiii-Vinyzu/patchright">Patchright</a> with full User-Agent Client Hints, worker target alignment, and optional C++ hardware/GPU spoofing via the <a href="https://github.com/Vuln-Inc/behead-browser/tree/cloak"><code>cloak</code></a> branch.
+  Undetected, display-free headless Chromium on top of <a href="https://github.com/Kaliiiiiiiiii-Vinyzu/patchright">Patchright</a> that achieves <b>1:1 detector parity with headed Patchright</b> without Xvfb, plus optional C++ hardware/GPU rotation via the <a href="https://github.com/Vuln-Inc/behead-browser/tree/cloak"><code>cloak</code></a> branch.
 </p>
 
 ---
 
 ## Overview
 
-Stock Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromium still exposes `HeadlessChrome` in `navigator.userAgent`, `sec-ch-ua` headers, high-entropy `navigator.userAgentData` (`brands` and `fullVersionList`), and worker scopes (`Worker`, `SharedWorker`, `ServiceWorker`), while passing `--user-agent` on the CLI wipes high-entropy Client Hints inside workers.
+Even when a machine has a physical GPU, running stock Patchright in `headless: true` leaks headless signals across multiple layers:
+1. **UA & Worker Client Hints:** Exposes `HeadlessChrome` in `navigator.userAgent`, `sec-ch-ua` headers, high-entropy `navigator.userAgentData` (`brands` and `fullVersionList`), and worker scopes (`Worker`, `SharedWorker`, `ServiceWorker`). Passing `--user-agent` on the CLI blanks out high-entropy Client Hints inside workers.
+2. **WebGL Fallback (`SwiftShader`):** Headless Chromium defaults to software `SwiftShader` rendering (`hasSwiftShader: true`) unless hardware GPU flags are explicitly enabled and `--enable-unsafe-swiftshader` is stripped.
+3. **Headless Screen / Taskbar Geometry:** Headless Chromium defaults to an `800x600` screen with `availHeight === height` (`noTaskbar: true`) and injects `--hide-scrollbars`.
 
-**Behead Browser** eliminates these headless leaks without Xvfb, `addInitScript` injection, or prototype tampering:
+**Behead Browser** fixes all three natively without Xvfb, `addInitScript` injection, or prototype tampering:
 - Probes the installed Chromium binary once per process on a local loopback origin and preserves the native host OS, architecture, bitness, form factors, and browser version.
 - Attaches browser-level CDP target listeners (`Target.setAutoAttach`) to apply `Emulation.setUserAgentOverride` across pages, iframes, popups, dedicated workers, shared workers, and service workers (including cached Service Workers on reopened persistent profiles).
-- Strips Playwright's default headless `--hide-scrollbars` flag and defaults to `viewport: null`.
+- Enables native hardware GPU rendering (`--enable-gpu`, `--ignore-gpu-blocklist`, stripping `--enable-unsafe-swiftshader`), sets native desktop screen/taskbar geometry (`--screen-info={1920x1080 workAreaBottom=40}`, `--window-size=1920,1040`), strips `--hide-scrollbars`, and defaults to `viewport: null`.
 
 ## Branches
 
-- **`main` (Stock Patchright Engine):** Zero-lie wrapper around stock Patchright Chromium. Preserves native host hardware and OS (`0% headless`, `0% stealth`, `0 lies` on CreepJS).
-- **[`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak) (CloakBrowser C++ Engine over Patchright):** Drives CloakBrowser's C++-patched Chromium binary via Patchright instead of unpatched `playwright-core`. Replaces `SwiftShader` on GPU-less Linux VPS servers with seed-rotated hardware GPUs (`RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`), CPU cores, and RAM (`fingerprintSeed`), and defaults to zero-lie mode (`fingerprintNoise: false` -> `0 lies`, `25% likeHeadlessRating` on CreepJS, `0` failed checks on SannySoft).
+- **`main` (Stock Patchright Engine):** Zero-lie wrapper around stock Patchright Chromium. Achieves **exact 1:1 detector parity with Headed Patchright (`headless: false`)** on the same host (`0% headless`, `0% stealth`, `0 lies`, `hasSwiftShader: false`, `noTaskbar: false`, `0` SannySoft failures).
+- **[`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak) (CloakBrowser C++ Engine over Patchright):** For GPU-less Linux VPS servers (where no physical GPU device exists) or multi-account fingerprint rotation. Drives CloakBrowser's C++-patched Chromium binary via Patchright to spoof seed-rotated hardware GPUs (`RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`), CPU cores, and RAM (`fingerprintSeed`) with `fingerprintNoise: false` by default (`0 lies`, `25% likeHeadlessRating` on CreepJS, `0` SannySoft failures).
 
-## Headless Comparison (`headless: true`, no Xvfb, GPU-less Linux VPS)
+## Detector Benchmark (`bun run bench`)
 
-Reproduce locally with `bun run bench` (`src/bench.ts`).
+`src/bench.ts` launches **Patchright (Headed Baseline)**, **Patchright (Standalone Headless)**, and **Behead Browser (Headless)** against live CreepJS, SannySoft, and Cloudflare Turnstile, and programmatically asserts 1:1 parity between `Behead Browser (Headless)` and `Patchright (Headed Baseline)`:
 
-| Metric / Detector | Stock Playwright | Puppeteer-Extra-Stealth | Patchright (Standalone) | CloakBrowser (Standalone) | Behead (`main`) | Behead ([`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak)) |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **CDP `Runtime.enable` Leak** | Leaked | Leaked | **Not sent** | Leaked (`playwright-core`) | **Not sent** | **Not sent** |
-| **CreepJS `headlessRating`** | `100%` | `38%+` | `67%` | `0%` | **`0%`** | **`0%`** |
-| **CreepJS `stealthRating`** | `0%` | `40%+` (JS proxy traps) | `0%` | `0%` | **`0%`** | **`0%`** |
-| **CreepJS `likeHeadlessRating` (no GPU)** | `69%+` | `56%+` | `50%` (`SwiftShader`) | `31%` (`hasVvpScreenRes`) | **`50%`** (`SwiftShader`) | **`25%` (Hardware GPU)** |
-| **CreepJS `liesCount`** | `0` | `12+` (prototype lies) | `0` | `5` (Canvas/Audio/Rects) | **`0`** | **`0`** (default) |
-| **Worker High-Entropy Client Hints** | `HeadlessChrome` | Blank / Mismatched | `HeadlessChrome` | Populated | **Populated (All Workers)** | **Populated (All Workers)** |
-| **Hardware / GPU Rotation** | None (`SwiftShader`) | None (`SwiftShader`) | None (`SwiftShader`) | Per-seed (`--fingerprint`) | Native host hardware | **Per-seed (`fingerprintSeed`)** |
-| **SannySoft Failed Checks** | `5` (`webdriver` + UA + WebGL) | `1` (`SwiftShader` WebGL) | `4` (`HeadlessChrome` UA + WebGL) | `0` | **`1`** (`SwiftShader` WebGL) | **`0` (Hardware GPU)** |
-| **Cloudflare Turnstile (`cf_clearance`)** | Fails | Fails | Passes | Passes | **Passes** | **Passes** |
+| Metric / Detector | Stock Playwright (Headless) | Puppeteer-Extra-Stealth (Headless) | Patchright (Standalone Headless) | CloakBrowser (Standalone Headless) | **Patchright (Headed Baseline)** | **Behead (`main` Headless)** | **Behead ([`cloak`](https://github.com/Vuln-Inc/behead-browser/tree/cloak) Headless)** |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **CDP `Runtime.enable` Leak** | Leaked | Leaked | Not sent | Leaked (`playwright-core`) | **Not sent** | **Not sent** | **Not sent** |
+| **CreepJS `headlessRating`** | `100%` | `38%+` | `67%` | `0%` | **`0%`** | **`0%` (1:1)** | **`0%`** |
+| **CreepJS `stealthRating`** | `0%` | `40%+` (JS proxy traps) | `0%` | `0%` | **`0%`** | **`0%` (1:1)** | **`0%`** |
+| **CreepJS `likeHeadlessRating`** | `69%+` | `56%+` | `50%` | `31%` (`hasVvpScreenRes`) | **`38%`** (Linux desktop baseline) | **`38%` (1:1)** | **`25%`** (Windows C++ profile) |
+| **CreepJS `hasSwiftShader`** | `true` | `true` | `true` | `false` | **`false`** | **`false` (1:1)** | **`false`** (Even on GPU-less VPS) |
+| **CreepJS `noTaskbar`** | `true` | `true` | `true` (`800x600`) | `false` | **`false`** | **`false` (1:1)** | **`false`** |
+| **CreepJS `liesCount`** | `0` | `12+` (prototype lies) | `0` | `5` (Canvas/Audio/Rects) | **`0`** | **`0` (1:1)** | **`0`** (default) |
+| **Worker High-Entropy Client Hints** | `HeadlessChrome` | Blank / Mismatched | `HeadlessChrome` | Populated | **Populated (All Workers)** | **Populated (1:1)** | **Populated (All Workers)** |
+| **SannySoft Failed Checks** | `5` | `1` (`SwiftShader`) | `4` (`HeadlessChrome` + `SwiftShader`) | `0` | **`0`** | **`0` (1:1)** | **`0`** |
+| **Cloudflare Turnstile (`cf_clearance`)** | Fails | Fails | Passes | Passes | **Passes** | **Passes (1:1)** | **Passes** |
 
 ## Setup
 
@@ -71,7 +75,7 @@ const persistentPage = await persistent.newPage()
 await persistent.close()
 ```
 
-### Hardware Spoofing & Seed Rotation (`cloak` branch)
+### GPU-less VPS & Seed Rotation (`cloak` branch)
 
 ```bash
 git checkout cloak && bun install
