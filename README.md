@@ -12,71 +12,57 @@
 
 ---
 
-## Branches
+## Overview
 
-- **`main` (Stock Patchright Engine):** Zero-lie headless wrapper around stock Patchright Chromium. Preserves your real native OS and hardware while stripping `HeadlessChrome` across HTTP headers, pages, popups, and all worker scopes.
-- **`cloak` (CloakBrowser Engine — this branch):** Drives CloakBrowser's C++-patched Chromium binary through Patchright instead of stock `playwright-core`. Eliminates `SwiftShader` WebGL leaks on GPU-less Linux VPS servers (`likeHeadlessRating: 25%`, `headlessRating: 0%`, `stealthRating: 0%`), rotates hardware/GPU profiles per seed (`fingerprintSeed`), and fixes CloakBrowser's standalone headless leaks (`Runtime.enable`, `innerHeight > outerHeight` viewport mismatch, and `--hide-scrollbars`).
+- **Hardware / GPU Spoofing on GPU-less VPS (`no SwiftShader`):** Replaces `SwiftShader` in headless mode with seed-rotated hardware GPUs (`RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`), CPU cores, and RAM via `--fingerprint=<seed>`.
+- **No `Runtime.enable` Leak:** Drives CloakBrowser's binary via **Patchright** instead of standalone CloakBrowser's `playwright-core`.
+- **Zero-Lie Mode by Default (`fingerprintNoise: false`):** Disables CloakBrowser's Canvas/Audio/DOMRect noise perturbations by default (`0 lies` on CreepJS) while keeping hardware/GPU seed rotation active. Pass `fingerprintNoise: true` to enable Canvas/Audio/DOMRect perturbation.
+- **Coherent Headless Window & Worker Alignment:** Defaults to `viewport: null`, strips `--hide-scrollbars`, and synchronizes high-entropy Client Hints across pages, popups, dedicated workers, shared workers, and service workers (including cached Service Workers on reopened persistent profiles).
 
-## What This Branch Fixes Over Standalone CloakBrowser & Stock Patchright
+## Headless Comparison (`headless: true`, no Xvfb, GPU-less Linux VPS)
 
-- **Hardware WebGL / GPU Spoofing on GPU-less VPS (`no SwiftShader`):** Stock Chromium in headless mode on a VPS without a GPU falls back to `SwiftShader`. This branch uses CloakBrowser's C++ binary to report real hardware GPUs (`NVIDIA GeForce RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`, etc.) selected deterministically by seed.
-- **No `Runtime.enable` CDP Leak:** Standalone `cloakbrowser` drives its binary with unpatched `playwright-core`, which sends `Runtime.enable`. This branch drives the CloakBrowser binary with **Patchright**.
-- **Coherent Headless Window Geometry:** Standalone `cloakbrowser` defaults to an emulated `1920x1080` viewport against a `1032px` taskbar height in headless mode (`window.innerHeight > window.outerHeight`). This branch defaults to `viewport: null` so window dimensions stay coherent without Xvfb.
-- **Zero-Lie Mode by Default (`fingerprintNoise: false`):** CloakBrowser's default Canvas/Audio/DOMRect noise perturbations are disabled by default (`--fingerprint-noise=false`) to achieve **`0 lies`** on CreepJS while still rotating hardware/GPU profiles per seed. Pass `fingerprintNoise: true` if you explicitly want Canvas/Audio/DOMRect hash perturbation.
-- **Full Worker & Persistent Session Alignment:** Automatically propagates Client Hints across pages, popups, dedicated workers, shared workers, and service workers (including cached Service Workers on reopened persistent profiles).
+Reproduce locally with `bun run bench` (`src/bench.ts`).
 
-## Verified Detector Results (`headless: true`, no Xvfb, GPU-less Linux)
-
-| Detector / Metric | Patchright (Standalone) | CloakBrowser (Standalone) | Behead Browser (`main`) | Behead Browser (`cloak`) |
-| :--- | :--- | :--- | :--- | :--- |
-| **CreepJS `headlessRating`** | `67%` | `0%` | `0%` | **`0%`** |
-| **CreepJS `stealthRating`** | `0%` | `0%` | `0%` | **`0%`** |
-| **CreepJS `likeHeadlessRating` (no GPU)** | `50%` (`SwiftShader`) | `31%` (`hasVvpScreenRes`) | `50%` (`SwiftShader`) | **`25%` (Hardware GPU, no SwiftShader)** |
-| **CreepJS `liesCount`** | `0` | `5` (Canvas/Audio/Rects) | `0` | **`0`** |
-| **CDP `Runtime.enable`** | Not sent | Sent (`playwright-core`) | Not sent | **Not sent** |
-| **Cloudflare Turnstile (`cf_clearance`)** | Fails in headless | Passes | Passes | **Passes** |
-| **BrowserScan Bot Detection** | Fails (`HeadlessChrome` UA) | Normal | Normal | **Normal** |
-| **SannySoft (`bot.sannysoft.com`)** | Fails (`HeadlessChrome` UA) | `0` failed checks | `0` failed checks | **`0` failed checks** |
+| Metric / Detector | Stock Playwright | Puppeteer-Extra-Stealth | Patchright (Standalone) | CloakBrowser (Standalone) | Behead ([`main`](https://github.com/Vuln-Inc/behead-browser)) | Behead (`cloak` — this branch) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **CDP `Runtime.enable` Leak** | Leaked | Leaked | **Not sent** | Leaked (`playwright-core`) | **Not sent** | **Not sent** |
+| **CreepJS `headlessRating`** | `100%` | `38%+` | `67%` | `0%` | **`0%`** | **`0%`** |
+| **CreepJS `stealthRating`** | `0%` | `40%+` (JS proxy traps) | `0%` | `0%` | **`0%`** | **`0%`** |
+| **CreepJS `likeHeadlessRating` (no GPU)** | `69%+` | `56%+` | `50%` (`SwiftShader`) | `31%` (`hasVvpScreenRes`) | **`50%`** (`SwiftShader`) | **`25%` (Hardware GPU)** |
+| **CreepJS `liesCount`** | `0` | `12+` (prototype lies) | `0` | `5` (Canvas/Audio/Rects) | **`0`** | **`0`** (default) |
+| **Worker High-Entropy Client Hints** | `HeadlessChrome` | Blank / Mismatched | `HeadlessChrome` | Populated | **Populated (All Workers)** | **Populated (All Workers)** |
+| **Hardware / GPU Rotation** | None (`SwiftShader`) | None (`SwiftShader`) | None (`SwiftShader`) | Per-seed (`--fingerprint`) | Native host hardware | **Per-seed (`fingerprintSeed`)** |
+| **SannySoft Failed Checks** | `5` (`webdriver` + UA + WebGL) | `1` (`SwiftShader` WebGL) | `4` (`HeadlessChrome` UA + WebGL) | `0` | **`1`** (`SwiftShader` WebGL) | **`0` (Hardware GPU)** |
+| **Cloudflare Turnstile (`cf_clearance`)** | Fails | Fails | Passes | Passes | **Passes** | **Passes** |
 
 ## Setup
 
 ```bash
 bun install
 bun test
-bun run build
+bun run bench
 ```
 
 ## Usage
 
 ```ts
-import { launchBeheadBrowser } from "./src/index.js"
+import { launchBeheadBrowser, launchPersistentBeheadSession } from "./src/index.js"
 
+// Ephemeral session with seed-rotated hardware
 const browser = await launchBeheadBrowser({
   fingerprintSeed: 55123,
   timezone: "America/New_York",
   locale: "en-US",
 })
+const session = await browser.newSession()
+const page = await session.newPage()
+await page.goto("https://example.com")
+await browser.close()
 
-try {
-  const session = await browser.newSession()
-  const page = await session.newPage()
-
-  await page.goto("https://example.com")
-  console.log(await page.title())
-
-  await session.close()
-} finally {
-  await browser.close()
-}
-```
-
-## Persistent Profile
-
-```ts
-import { launchPersistentBeheadSession } from "./src/index.js"
-
-const session = await launchPersistentBeheadSession("./user-data", {
+// Persistent profile on disk
+const persistent = await launchPersistentBeheadSession("./user-data", {
   fingerprintSeed: 55123,
 })
-const page = await session.newPage()
+const persistentPage = await persistent.newPage()
+await persistent.close()
 ```

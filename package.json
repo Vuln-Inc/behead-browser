@@ -11,6 +11,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
+    "bench": "bun src/bench.ts",
     "build": "tsc -p tsconfig.json",
     "clean": "bun -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
     "start": "bun src/example.ts",
