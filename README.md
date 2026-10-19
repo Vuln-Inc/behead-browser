@@ -21,7 +21,7 @@ Running Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromi
 ## Branches: Stock Engine (`main`) vs Hardware Spoofing Engine (`cloak`)
 
 - **`main` (Stock Patchright Engine):** Zero-lie headless wrapper around stock Patchright Chromium. Preserves your machine's real native hardware and OS while eliminating `HeadlessChrome` leaks across HTTP headers, pages, popups, and all worker scopes (`0% headless`, `0% stealth`, `0 lies` on CreepJS).
-- **[`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak) (CloakBrowser C++ Engine over Patchright):** Drives CloakBrowser's C++-patched Chromium binary through Patchright instead of unpatched `playwright-core`. Eliminates `SwiftShader` WebGL hardware leaks on GPU-less Linux VPS servers (`likeHeadlessRating: 25%`, `headlessRating: 0%`, `stealthRating: 0%`), rotates hardware GPUs (`NVIDIA GeForce RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`), CPU cores, RAM, and Canvas/Audio/DOMRect fingerprints per session seed (`fingerprintSeed`), and supports a zero-lie hardware rotation mode (`fingerprintNoise: false` -> `0 lies` on CreepJS).
+- **[`cloak` branch](https://github.com/Vuln-Inc/behead-browser/tree/cloak) (CloakBrowser C++ Engine over Patchright):** Drives CloakBrowser's C++-patched Chromium binary through Patchright instead of unpatched `playwright-core`. Eliminates `SwiftShader` WebGL hardware leaks on GPU-less Linux VPS servers (`likeHeadlessRating: 25%`, `headlessRating: 0%`, `stealthRating: 0%`), rotates hardware GPUs (`NVIDIA GeForce RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`), CPU cores, and RAM per session seed (`fingerprintSeed`), and defaults to zero-lie mode (`fingerprintNoise: false` by default -> `0 lies` on CreepJS).
 
 ## What It Does
 
@@ -39,7 +39,7 @@ Running Patchright in `headless: true` avoids `Runtime.enable` leaks, but Chromi
 | **CreepJS `headlessRating`** | `67%` (`HeadlessChrome` in UA & Workers) | `0%` | **`0%`** | **`0%`** |
 | **CreepJS `stealthRating`** | `0%` | `0%` | **`0%`** | **`0%`** |
 | **CreepJS `likeHeadlessRating` (GPU-less VPS)** | `50%` (`SwiftShader`) | `31%` (`hasVvpScreenRes` viewport mismatch) | **`50%`** (`SwiftShader`) | **`25%` (Hardware GPU, no SwiftShader)** |
-| **CreepJS `liesCount`** | `0` | `5` (Canvas, AudioBuffer, DOMRect noise) | **`0`** | **`0`** (`fingerprintNoise: false`) / `5` (noise on) |
+| **CreepJS `liesCount`** | `0` | `5` (Canvas, AudioBuffer, DOMRect noise) | **`0`** | **`0`** (default) |
 | **CDP `Runtime.enable` Leak** | Not sent | Sent (uses stock `playwright-core`) | **Not sent** | **Not sent** |
 | **Worker High-Entropy Client Hints** | Leaks `HeadlessChrome` (or blank if `--user-agent` is set) | Populated | **Populated (`Page`, `Worker`, `SharedWorker`, `ServiceWorker`)** | **Populated (`Page`, `Worker`, `SharedWorker`, `ServiceWorker`)** |
 | **Hardware / GPU Fingerprint Rotation** | None (`SwiftShader` on VPS) | Per-seed (`--fingerprint=<seed>`) | Native host hardware | **Per-seed (`fingerprintSeed`, real RTX GPUs)** |
@@ -134,7 +134,6 @@ import { launchBeheadBrowser } from "./src/index.js"
 
 const browser = await launchBeheadBrowser({
   fingerprintSeed: 55123,
-  fingerprintNoise: false, // 0 lies on CreepJS while rotating hardware/GPU profile per seed
   timezone: "America/New_York",
   locale: "en-US",
 })
