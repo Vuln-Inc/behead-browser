@@ -377,8 +377,8 @@ describe("Behead Patchright fingerprint", () => {
   }, 30_000)
 
   test("rotates hardware GPU fingerprint by seed without SwiftShader", async () => {
-    const b1 = await launchBeheadBrowser({ fingerprintSeed: 10001, fingerprintNoise: false })
-    const b2 = await launchBeheadBrowser({ fingerprintSeed: 20002, fingerprintNoise: false })
+    const b1 = await launchBeheadBrowser({ fingerprintSeed: 10001 })
+    const b2 = await launchBeheadBrowser({ fingerprintSeed: 20002 })
 
     try {
       const s1 = await b1.newSession()

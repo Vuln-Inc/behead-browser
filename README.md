@@ -22,12 +22,12 @@
 - **Hardware WebGL / GPU Spoofing on GPU-less VPS (`no SwiftShader`):** Stock Chromium in headless mode on a VPS without a GPU falls back to `SwiftShader`. This branch uses CloakBrowser's C++ binary to report real hardware GPUs (`NVIDIA GeForce RTX 4070 SUPER`, `RTX 3070`, `RTX 3050 Ti`, etc.) selected deterministically by seed.
 - **No `Runtime.enable` CDP Leak:** Standalone `cloakbrowser` drives its binary with unpatched `playwright-core`, which sends `Runtime.enable`. This branch drives the CloakBrowser binary with **Patchright**.
 - **Coherent Headless Window Geometry:** Standalone `cloakbrowser` defaults to an emulated `1920x1080` viewport against a `1032px` taskbar height in headless mode (`window.innerHeight > window.outerHeight`). This branch defaults to `viewport: null` so window dimensions stay coherent without Xvfb.
-- **Optional Zero-Lie Mode (`fingerprintNoise: false`):** CloakBrowser's default Canvas/Audio/DOMRect noise perturbations can be toggled off via `fingerprintNoise: false` (`--fingerprint-noise=false`) to achieve **`0 lies`** on CreepJS while still rotating hardware/GPU profiles per seed.
+- **Zero-Lie Mode by Default (`fingerprintNoise: false`):** CloakBrowser's default Canvas/Audio/DOMRect noise perturbations are disabled by default (`--fingerprint-noise=false`) to achieve **`0 lies`** on CreepJS while still rotating hardware/GPU profiles per seed. Pass `fingerprintNoise: true` if you explicitly want Canvas/Audio/DOMRect hash perturbation.
 - **Full Worker & Persistent Session Alignment:** Automatically propagates Client Hints across pages, popups, dedicated workers, shared workers, and service workers (including cached Service Workers on reopened persistent profiles).
 
 ## Verified Detector Results (`headless: true`, no Xvfb, GPU-less Linux)
 
-| Detector / Metric | Patchright (Standalone) | CloakBrowser (Standalone) | Behead Browser (`main`) | Behead Browser (`cloak`, `fingerprintNoise: false`) |
+| Detector / Metric | Patchright (Standalone) | CloakBrowser (Standalone) | Behead Browser (`main`) | Behead Browser (`cloak`) |
 | :--- | :--- | :--- | :--- | :--- |
 | **CreepJS `headlessRating`** | `67%` | `0%` | `0%` | **`0%`** |
 | **CreepJS `stealthRating`** | `0%` | `0%` | `0%` | **`0%`** |
@@ -53,7 +53,6 @@ import { launchBeheadBrowser } from "./src/index.js"
 
 const browser = await launchBeheadBrowser({
   fingerprintSeed: 55123,
-  fingerprintNoise: false, // set true (default) to also perturb Canvas/Audio/DOMRect hashes per seed
   timezone: "America/New_York",
   locale: "en-US",
 })
@@ -78,7 +77,6 @@ import { launchPersistentBeheadSession } from "./src/index.js"
 
 const session = await launchPersistentBeheadSession("./user-data", {
   fingerprintSeed: 55123,
-  fingerprintNoise: false,
 })
 const page = await session.newPage()
 ```

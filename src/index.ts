@@ -244,7 +244,7 @@ async function resolveCloakConfig(
     userArgs.push(`--fingerprint=${options.fingerprintSeed}`)
   }
   if (
-    options.fingerprintNoise === false &&
+    (options.fingerprintNoise ?? false) === false &&
     !userArgs.some((a) => a.startsWith("--fingerprint-noise="))
   ) {
     userArgs.push("--fingerprint-noise=false")
